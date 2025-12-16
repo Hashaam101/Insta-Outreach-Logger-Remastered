@@ -1,0 +1,9 @@
+customtkinter
+oracledb
+requests
+pyinstaller
+streamlit
+matplotlib
+pandas
+
+matplotlib
