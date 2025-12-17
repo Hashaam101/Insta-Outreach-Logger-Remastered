@@ -216,10 +216,18 @@ else:
             pivot_table.columns.name = None
             pivot_table = pivot_table.sort_index(ascending=False)
 
-            st.dataframe(
-                pivot_table.style.background_gradient(cmap="Greens", axis=None).format("{:.0f}"),
-                use_container_width=True
-            )
+            if pivot_table.empty:
+                st.info("No outreach data available for the selected filters.")
+            else:
+                try:
+                    st.dataframe(
+                        pivot_table.style.background_gradient(cmap="Greens", axis=None).format("{:.0f}"),
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    # Fallback if styling fails (e.g., missing dependencies)
+                    st.warning(f"Could not render styled table: {e}")
+                    st.dataframe(pivot_table, use_container_width=True)
         else:
             st.write("No data for this period.")
 
