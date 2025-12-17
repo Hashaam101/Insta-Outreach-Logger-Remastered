@@ -1,0 +1,348 @@
+/* Insta Outreach Logger - Status Banner Styles */
+
+/* Main Banner Styling */
+.insta-warning-banner {
+    position: fixed;
+    z-index: 2147483647;
+    cursor: move;
+
+    border-radius: 18px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease-out, visibility 0.3s ease-out;
+}
+
+.insta-warning-banner.visible {
+    opacity: 1;
+    visibility: visible;
+    backdrop-filter: blur(2px);
+}
+
+/* State-specific styles */
+/* Base styles for the modern, larger banners */
+.banner-style-base {
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    padding: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+/* Modifier class for the red 'contacted' banner */
+.insta-warning-banner--contacted {
+    background-color: #ac1111;
+}
+
+/* Modifier class for the green 'not contacted' banner */
+.insta-warning-banner--not-contacted {
+    background-color: #073f1c;
+}
+
+/* Modifier class for the blue 'searching' banner */
+.insta-warning-banner--searching {
+    background-color: #101828;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 999px; /* Pill shape */
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.searching-icon-container {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background-color: #162556;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.searching-icon-container > * {
+    width: 36px !important;
+    height: 36px !important;
+}
+
+.searching-text {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: white;
+    margin: 0;
+    padding-right: 20px; /* Add some space at the end */
+}
+
+/* Content inside the other banners */
+.banner-content {
+    display: flex;
+    align-items: center; /* Center icon and details */
+    gap: 12px;
+}
+
+.contact-icon {
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+}
+
+.contact-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.contact-title {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: white;
+    margin: 0;
+    padding: 0;
+}
+
+/* Dropdown styling */
+.status-dropdown-wrapper {
+    position: relative;
+    width: 200px;
+}
+
+.status-dropdown {
+    width: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    border: 2px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    color: white;
+    padding: 8px 35px 8px 15px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    cursor: pointer;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* --- Status Dropdown Sync Indicators --- */
+
+/* Stage 1: Locally changed - Yellow/Orange */
+.status-dropdown.status-sync-local {
+    border-color: #f59e0b;
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+    animation: dropdown-pulse-local 1s ease-in-out infinite;
+}
+
+@keyframes dropdown-pulse-local {
+    0%, 100% { box-shadow: 0 0 6px rgba(245, 158, 11, 0.3); }
+    50% { box-shadow: 0 0 12px rgba(245, 158, 11, 0.6); }
+}
+
+/* Stage 2: Queued for upload - Blue */
+.status-dropdown.status-sync-queued {
+    border-color: #3b82f6;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+    animation: dropdown-pulse-queued 0.8s ease-in-out infinite;
+}
+
+@keyframes dropdown-pulse-queued {
+    0%, 100% { box-shadow: 0 0 6px rgba(59, 130, 246, 0.3); }
+    50% { box-shadow: 0 0 12px rgba(59, 130, 246, 0.7); }
+}
+
+/* Stage 3: Synced - Green */
+.status-dropdown.status-sync-synced {
+    border-color: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+    animation: none;
+}
+
+/* Stage 4: Sync error - Red */
+.status-dropdown.status-sync-error {
+    border-color: #ef4444;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+    animation: dropdown-pulse-error 1s ease-in-out infinite;
+}
+
+@keyframes dropdown-pulse-error {
+    0%, 100% { box-shadow: 0 0 6px rgba(239, 68, 68, 0.3); }
+    50% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.7); }
+}
+
+.status-dropdown option {
+    background-color: #333;
+    color: white;
+}
+
+.dropdown-arrow {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    pointer-events: none; /* Allows clicks to pass through to the select */
+}
+
+/* Close Button */
+.close-btn {
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    line-height: 0; /* Important for image buttons */
+    flex-shrink: 0;
+}
+
+.close-btn img {
+    width: 20px;
+    height: 20px;
+}
+
+/* --- Minimized State --- */
+.insta-warning-banner.minimized {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background-size: 60%;
+    background-position: center;
+    background-repeat: no-repeat;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    padding: 0;
+    gap: 0;
+    cursor: move;
+    transition: all 0.2s ease-out;
+}
+
+.insta-warning-banner.minimized[data-state="contacted"] {
+    background-color: #480505;
+}
+
+.insta-warning-banner.minimized[data-state="not_contacted"] {
+    background-color: #052712;
+}
+
+.insta-warning-banner.minimized .banner-content,
+.insta-warning-banner.minimized .close-btn {
+    display: none;
+}
+
+/* --- Utility Classes --- */
+.message-button-warning {
+    border: 2px solid red !important;
+}
+
+body.insta-logger-dragging {
+    cursor: move !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+}
+
+/* --- Sync Stage Border Indicators --- */
+
+/* Stage 1: Searching local cache - Yellow/Orange pulsing */
+.insta-warning-banner.sync-stage-local {
+    border: 3px solid #f59e0b !important;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.5) !important;
+}
+
+@keyframes pulse-local {
+    0%, 100% { box-shadow: 0 0 10px rgba(245, 158, 11, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(245, 158, 11, 0.7); }
+}
+
+/* New keyframes for rainbow effect */
+@keyframes rotate {
+    100% {
+        transform: rotate(1turn);
+    }
+}
+
+/* Stage 2: Querying backend - RAINBOW effect */
+.insta-warning-banner.sync-stage-cloud {
+    overflow: hidden;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.insta-warning-banner.sync-stage-cloud::before {
+    content: '';
+    position: absolute;
+    z-index: -2;
+    left: -50%;
+    top: -50%;
+    width: 200%;
+    height: 200%;
+    background-color: #399953;
+    background-repeat: no-repeat;
+    background-size: 50% 50%, 50% 50%;
+    background-position: 0 0, 100% 0, 100% 100%, 0 100%;
+    background-image: linear-gradient(#399953, #399953), linear-gradient(#fbb300, #fbb300), linear-gradient(#d53e33, #d53e33), linear-gradient(#377af5, #377af5);
+    animation: rotate 4s linear infinite;
+}
+
+.insta-warning-banner.sync-stage-cloud::after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    left: 3px;
+    top: 3px;
+    width: calc(100% - 6px);
+    height: calc(100% - 6px);
+    background: black; /* Fallback */
+    border-radius: 15px;
+}
+
+/* Set the correct inner background color based on the banner's state */
+.insta-warning-banner.sync-stage-cloud.insta-warning-banner--contacted::after {
+    background: #ac1111;
+}
+
+.insta-warning-banner.sync-stage-cloud.insta-warning-banner--not-contacted::after {
+    background: #073f1c;
+}
+
+@keyframes pulse-cloud {
+    0%, 100% { box-shadow: 0 0 10px rgba(59, 130, 246, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.8); }
+}
+
+/* Stage 3: Found - Green pulsing */
+.insta-warning-banner.sync-stage-downloading {
+    border: 3px solid #10b981 !important;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.5) !important;
+}
+
+@keyframes pulse-downloading {
+    0%, 100% { box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }
+    50% { box-shadow: 0 0 25px rgba(16, 185, 129, 0.9); }
+}
+
+/* Stage 4: Sync complete (found) - Solid Green */
+.insta-warning-banner.sync-stage-complete {
+    border: 3px solid #10b981 !important;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.4) !important;
+    animation: none !important;
+}
+
+/* Stage 5: Sync complete (not found) - Grey/subtle */
+.insta-warning-banner.sync-stage-not-found {
+    border: 3px solid rgba(255, 255, 255, 0.2) !important;
+    box-shadow: none !important;
+    animation: none !important;
+}
+
+/* Stage 6: Error/Offline - Red pulsing */
+.insta-warning-banner.sync-stage-error {
+    border: 3px solid #ef4444 !important;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5) !important;
+}
+
+@keyframes pulse-error {
+    0%, 100% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.8); }
+}

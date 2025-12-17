@@ -121,13 +121,23 @@ class IPCServer:
 
     def _process_message(self, msg: dict, client_id: str) -> dict:
         msg_type = msg.get("type") or msg.get("action", "").upper()
+        request_id = msg.get("requestId")  # For response routing
+
         if msg_type == "LOG_OUTREACH":
-            return self._handle_log_outreach(msg, client_id)
+            response = self._handle_log_outreach(msg, client_id)
+        elif msg_type == "CHECK_PROSPECT_STATUS":
+            response = self._handle_check_prospect_status(msg, client_id)
+        elif msg_type == "UPDATE_PROSPECT_STATUS":
+            response = self._handle_update_prospect_status(msg, client_id)
         elif msg_type == "PING":
-            return {"status": "ok", "type": "PONG"}
-        # (Other message handlers remain the same)
+            response = {"status": "ok", "type": "PONG"}
         else:
-            return create_error_response(f"Unknown message type: {msg_type}")
+            response = create_error_response(f"Unknown message type: {msg_type}")
+
+        # Include requestId in response for routing
+        if request_id:
+            response["requestId"] = request_id
+        return response
 
     def _handle_log_outreach(self, msg: dict, client_id: str) -> dict:
         """
@@ -162,6 +172,114 @@ class IPCServer:
             print(f"[IPC] Error logging outreach: {e}")
             traceback.print_exc()
             return create_error_response(f"Database error: {e}")
+
+    def _handle_check_prospect_status(self, msg: dict, client_id: str) -> dict:
+        """
+        Handle CHECK_PROSPECT_STATUS message. Checks local DB first, then Oracle.
+        Returns the prospect's status if they've been contacted before.
+        """
+        try:
+            payload = msg.get("payload", msg)
+            target = payload.get("target")
+
+            if not target:
+                return create_error_response("Missing 'target' in CHECK_PROSPECT_STATUS")
+
+            print(f"[IPC] Checking prospect status for: {target}")
+
+            # First check local SQLite database
+            with self._lock:
+                local_prospect = self.db.get_prospect(target)
+
+            if local_prospect:
+                print(f"[IPC] Local HIT for {target}: {local_prospect.get('status')}")
+                return create_ack_response(True, {
+                    "contacted": True,
+                    "status": local_prospect.get("status", "Cold_NoReply"),
+                    "source": "local"
+                })
+
+            # If not found locally, check Oracle database via sync engine
+            try:
+                oracle_status = self.sync_engine.check_prospect_in_oracle(target)
+                if oracle_status:
+                    print(f"[IPC] Oracle HIT for {target}: {oracle_status}")
+                    return create_ack_response(True, {
+                        "contacted": True,
+                        "status": oracle_status,
+                        "source": "oracle"
+                    })
+            except Exception as e:
+                print(f"[IPC] Oracle check failed for {target}: {e}")
+                # Continue even if Oracle check fails - just return not found
+
+            print(f"[IPC] MISS for {target} - not contacted before")
+            return create_ack_response(True, {
+                "contacted": False,
+                "source": "none"
+            })
+
+        except Exception as e:
+            print(f"[IPC] Error checking prospect status: {e}")
+            traceback.print_exc()
+            return create_error_response(f"Error checking status: {e}")
+
+    def _handle_update_prospect_status(self, msg: dict, client_id: str) -> dict:
+        """
+        Handle UPDATE_PROSPECT_STATUS message. Updates the prospect's status
+        in both local DB and Oracle, and logs the status change event.
+        """
+        try:
+            payload = msg.get("payload", msg)
+            target = payload.get("target")
+            new_status = payload.get("new_status")
+            actor = payload.get("actor", "unknown_actor")
+
+            if not target or not new_status:
+                return create_error_response("Missing 'target' or 'new_status' in UPDATE_PROSPECT_STATUS")
+
+            # Get the old status before updating
+            with self._lock:
+                old_prospect = self.db.get_prospect(target)
+            old_status = old_prospect.get("status", "New") if old_prospect else "New"
+
+            print(f"[IPC] Updating prospect status: {target} ({old_status} -> {new_status})")
+
+            # Update local SQLite database
+            with self._lock:
+                updated = self.db.update_prospect_status(target, new_status)
+
+            if updated:
+                print(f"[IPC] Local status updated for {target}: {new_status}")
+            else:
+                # If prospect doesn't exist locally, insert it
+                print(f"[IPC] Prospect {target} not in local DB, will be synced via next outreach")
+
+            # Log the status change event to outreach_logs (showing transition)
+            status_change_log = {
+                "target_username": target,
+                "actor_username": actor,
+                "message_snippet": f"[Status: {old_status} -> {new_status}]",
+                "operator_name": self.operator_name
+            }
+            with self._lock:
+                log_id = self.db.log_outreach(status_change_log)
+            print(f"[IPC] Status change logged (ID: {log_id}) for {target}: {old_status} -> {new_status}")
+
+            # Trigger sync engine to push update to Oracle
+            try:
+                self.sync_engine.update_prospect_status_in_oracle(target, new_status)
+                print(f"[IPC] Oracle status update queued for {target}")
+            except Exception as e:
+                print(f"[IPC] Oracle update failed for {target}: {e}")
+                # Continue even if Oracle fails - local update is still valid
+
+            return create_ack_response(True, {"success": True})
+
+        except Exception as e:
+            print(f"[IPC] Error updating prospect status: {e}")
+            traceback.print_exc()
+            return create_error_response(f"Error updating status: {e}")
 
     def start(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

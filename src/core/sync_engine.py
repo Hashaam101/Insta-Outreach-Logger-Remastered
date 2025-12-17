@@ -89,6 +89,37 @@ class SyncEngine:
             if local_db:
                 local_db.close()
 
+    def check_prospect_in_oracle(self, target_username: str) -> str:
+        """
+        Check if a prospect exists in Oracle and return their status.
+
+        Args:
+            target_username: The Instagram username to check.
+
+        Returns:
+            The prospect's status string if found, None otherwise.
+        """
+        try:
+            return self.db_manager.get_prospect_status(target_username)
+        except Exception as e:
+            print(f"[SyncEngine] Error checking prospect in Oracle: {e}")
+            return None
+
+    def update_prospect_status_in_oracle(self, target_username: str, new_status: str):
+        """
+        Update a prospect's status in Oracle.
+
+        Args:
+            target_username: The Instagram username to update.
+            new_status: The new status value.
+        """
+        try:
+            self.db_manager.update_prospect_status(target_username, new_status, notes=None)
+            print(f"[SyncEngine] Oracle status updated: {target_username} -> {new_status}")
+        except Exception as e:
+            print(f"[SyncEngine] Error updating prospect status in Oracle: {e}")
+            raise
+
     def _sync_loop(self):
         print("[SyncEngine] Background sync thread started.")
         while self.running:

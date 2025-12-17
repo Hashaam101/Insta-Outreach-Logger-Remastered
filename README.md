@@ -20,6 +20,8 @@ Insta Outreach Logger is a specialized tool designed to track high-volume Instag
 
 -   **🕵️‍♂️ Invisible Logging**: Uses `chrome.runtime.sendNativeMessage` to bypass browser network stacks.
 -   **🤖 Automated Actor & Operator Discovery**: Eliminates manual configuration by automatically identifying the human operator and Instagram account being used.
+-   **🔔 Real-Time Status Check**: Visual notification banners show whether a prospect has been contacted before, directly on Instagram profile and DM pages.
+-   **📊 Status Dropdown**: Update prospect status (Cold, Warm, Hot, Booked, etc.) directly from the notification banner.
 -   **⚡ Zero-Config Deployment**: Distributed as a compiled `.exe` launcher that auto-updates from GitHub Releases.
 -   **🔄 Delta Sync Engine**: Syncs only changed rows between Local SQLite and Oracle Cloud to minimize bandwidth.
 -   **🛡️ Secure & Free**: Built on Oracle Cloud's "Always Free" tier (20GB storage) with mTLS encryption.

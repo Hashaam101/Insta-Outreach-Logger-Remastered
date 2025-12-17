@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Insta Outreach Logger (Remastered)",
-    "version": "1.0",
+    "version": "1.1",
     "description": "Prevents duplicate outreach and tracks team metrics on Instagram.",
     "permissions": [
         "nativeMessaging",
@@ -22,6 +22,9 @@
             "js": [
                 "content.js"
             ],
+            "css": [
+                "content.css"
+            ],
             "run_at": "document_end"
         }
     ],
@@ -35,7 +38,12 @@
     },
     "web_accessible_resources": [
         {
-            "resources": ["injector.js"],
+            "resources": [
+                "injector.js",
+                "content.css",
+                "assets/*.svg",
+                "assets/*.png"
+            ],
             "matches": ["https://*.instagram.com/*"]
         }
     ]

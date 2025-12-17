@@ -37,7 +37,19 @@ This process ensures that no network requests are made from the browser, avoidin
     -   It calls `ensure_actor_exists()` in `database.py` to auto-register any new Actor in the Oracle `ACTORS` table, linking them to the `OWNER_OPERATOR`.
     -   It then bulk-inserts the logs and prospect data into the Oracle database.
 
-### 3. Reporting: The Command Center
+### 3. Real-Time Status Check (UI Notifications)
+
+When the user visits an Instagram profile page or opens a DM thread, the extension displays a visual status banner:
+
+1.  **Check Request:** The content script extracts the target username and sends a `CHECK_PROSPECT_STATUS` message via the native messaging bridge.
+2.  **Local Lookup:** The IPC Server first checks the local SQLite database for the prospect.
+3.  **Oracle Fallback:** If not found locally, it queries the Oracle Cloud database.
+4.  **Banner Display:**
+    -   **Green Banner ("Not Contacted Before"):** If the prospect has never been contacted.
+    -   **Red Banner ("Previously Contacted"):** If the prospect exists in the database, showing their current status.
+5.  **Status Dropdown:** Users can update the prospect's status directly from the banner. Changes are saved locally first, then synced to Oracle.
+
+### 4. Reporting: The Command Center
 
 -   A web dashboard (`src/dashboard/app.py`) built with Streamlit.
 -   It reads directly from the Oracle Cloud database to provide near real-time analytics on team and account performance.
@@ -53,4 +65,5 @@ All major development phases are complete. The application is a functional end-t
 -   **Phase 2: Chrome Extension & Bridge:** Complete.
 -   **Phase 3: Admin Command Center:** Complete.
 -   **Phase 4: Auto-Discovery Architecture:** Complete.
--   **Next Step:** Final cleanup and removal of debugging logs.
+-   **Phase 5: Real-Time Status Check & UI Notifications:** Complete.
+-   **Next Step:** Testing and optimization.

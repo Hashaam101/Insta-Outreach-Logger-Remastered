@@ -1,22 +1,22 @@
 // The connection to the native messaging host
 let nativePort = null;
-// The connection to the content script
-let contentPort = null;
+// Map of content script ports by tab ID
+let contentPorts = new Map();
+// Map of pending requests awaiting native host response
+let pendingRequests = new Map();
 
 const NATIVE_HOST_NAME = 'com.instaoutreach.logger';
 let discoveryTabId = null;
 
-console.log('Background script started (v2 - with Profile Discovery).');
+console.log('Background script started (v3 - with Real-Time Status Check).');
 
 // --- Profile Discovery on Install/Update ---
 chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install' || details.reason === 'update') {
         console.log('Extension installed/updated. Checking for Actor username...');
-        // Check if the username already exists
         chrome.storage.local.get('actorUsername', (result) => {
             if (!result.actorUsername) {
                 console.log('Actor username not found in storage. Starting discovery process.');
-                // Use a query parameter to signal to the content script that we are in discovery mode
                 chrome.tabs.create({ url: 'https://www.instagram.com/?discover_actor=true' }, (tab) => {
                     discoveryTabId = tab.id;
                 });
@@ -30,44 +30,59 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // --- Connection to Content Script ---
 chrome.runtime.onConnect.addListener((port) => {
-    console.assert(port.name === 'content-script', 'Connection is not from content script');
-    contentPort = port;
-    console.log('Connected to content script.');
+    if (port.name !== 'content-script') return;
 
-    contentPort.onMessage.addListener((message) => {
-        // --- Handle messages from the content script ---
-        
-        // This is our new message type for the discovery process
+    const tabId = port.sender?.tab?.id;
+    if (tabId) {
+        contentPorts.set(tabId, port);
+    }
+    console.log(`Connected to content script (tab ${tabId}).`);
+
+    port.onMessage.addListener((message) => {
+        // Handle actor discovery
         if (message.type === 'FOUND_ACTOR_USERNAME') {
             const username = message.username;
             console.log(`Received username from discovery: ${username}`);
             if (username && username !== 'unknown_actor') {
                 chrome.storage.local.set({ actorUsername: username }, () => {
                     console.log(`Successfully saved actor username: ${username}`);
-                    // Close the discovery tab now that we're done
                     if (discoveryTabId) {
                         chrome.tabs.remove(discoveryTabId);
                         discoveryTabId = null;
                     }
                 });
             }
-            return; // Stop here, don't forward this to native host
+            return;
+        }
+
+        // Store request info for response routing
+        if (message.requestId) {
+            pendingRequests.set(message.requestId, { tabId, requestId: message.requestId });
         }
 
         // Forward all other messages to the native host
         if (nativePort) {
-            console.log('Forwarding message from content script to native host:', message);
+            console.log('Forwarding message to native host:', message.type);
             nativePort.postMessage(message);
         } else {
             console.error('Cannot forward message: Native host not connected.');
-            // Attempt to reconnect if the native host is down
+            // Send error response back to content script
+            if (message.requestId && tabId) {
+                port.postMessage({
+                    requestId: message.requestId,
+                    error: true,
+                    message: 'Native host not connected'
+                });
+            }
             connectNative();
         }
     });
 
-    contentPort.onDisconnect.addListener(() => {
-        console.log('Content script disconnected.');
-        contentPort = null;
+    port.onDisconnect.addListener(() => {
+        console.log(`Content script disconnected (tab ${tabId}).`);
+        if (tabId) {
+            contentPorts.delete(tabId);
+        }
     });
 });
 
@@ -75,23 +90,46 @@ chrome.runtime.onConnect.addListener((port) => {
 // --- Connection to Native Host ---
 function connectNative() {
     console.log(`Connecting to native host: ${NATIVE_HOST_NAME}`);
-    nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+    try {
+        nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
 
-    nativePort.onMessage.addListener((message) => {
-        if (contentPort) {
-            contentPort.postMessage(message);
-        }
-    });
+        nativePort.onMessage.addListener((message) => {
+            console.log('Received message from native host:', message);
 
-    nativePort.onDisconnect.addListener(() => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-            console.error('Native host disconnected with error:', error.message);
-        } else {
-            console.log('Native host disconnected.');
-        }
+            // Route response to the correct content script
+            if (message.requestId && pendingRequests.has(message.requestId)) {
+                const { tabId, requestId } = pendingRequests.get(message.requestId);
+                pendingRequests.delete(message.requestId);
+
+                const port = contentPorts.get(tabId);
+                if (port) {
+                    port.postMessage(message);
+                }
+            } else {
+                // Broadcast to all connected content scripts if no specific target
+                contentPorts.forEach((port) => {
+                    try {
+                        port.postMessage(message);
+                    } catch (e) {
+                        // Port may have disconnected
+                    }
+                });
+            }
+        });
+
+        nativePort.onDisconnect.addListener(() => {
+            const error = chrome.runtime.lastError;
+            if (error) {
+                console.error('Native host disconnected with error:', error.message);
+            } else {
+                console.log('Native host disconnected.');
+            }
+            nativePort = null;
+        });
+    } catch (e) {
+        console.error('Failed to connect to native host:', e);
         nativePort = null;
-    });
+    }
 }
 
 // Initial connection attempt

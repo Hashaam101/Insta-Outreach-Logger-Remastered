@@ -38,6 +38,9 @@ native_manifest.json
 *.env
 .env
 
+# Streamlit secrets (for cloud hosting)
+.streamlit/secrets.toml
+
 # Local database and log files
 *.db
 *.sqlite

@@ -149,24 +149,56 @@ class DatabaseManager:
             INSERT INTO OUTREACH_LOGS (ACTOR_USERNAME, TARGET_USERNAME, MESSAGE_TEXT, CREATED_AT)
             VALUES (:actor_username, :target_username, :message_snippet, :timestamp)
         """
+        # Filter logs to only include fields needed for Oracle insert
+        filtered_logs = []
+        for log in logs:
+            filtered_logs.append({
+                'actor_username': log['actor_username'],
+                'target_username': log['target_username'],
+                'message_snippet': log['message_snippet'],
+                'timestamp': pd.to_datetime(log['timestamp'])
+            })
+
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
-                # Convert timestamp strings to datetime objects for the driver
-                for log in logs:
-                    log['timestamp'] = pd.to_datetime(log['timestamp'])
-                cursor.executemany(sql, logs, batcherrors=True)
+                cursor.executemany(sql, filtered_logs, batcherrors=True)
                 for error in cursor.getbatcherrors():
                     print("[OracleDB] Error during log insert:", error.message)
                 connection.commit()
+
+    def get_prospect_status(self, target_username: str) -> str:
+        """
+        Fetches the status of a single prospect from Oracle.
+
+        Args:
+            target_username: The Instagram username to look up.
+
+        Returns:
+            The prospect's status string if found, None otherwise.
+        """
+        sql = "SELECT STATUS FROM PROSPECTS WHERE TARGET_USERNAME = :1"
+        with self.get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, [target_username])
+                row = cursor.fetchone()
+                if row:
+                    return row[0]
+                return None
 
     def update_prospect_status(self, username, new_status, notes):
         """
         Updates the status and notes for a given prospect.
         """
-        sql = "UPDATE PROSPECTS SET status = :1, notes = :2, last_updated = CURRENT_TIMESTAMP WHERE target_username = :3"
+        if notes is not None:
+            sql = "UPDATE PROSPECTS SET STATUS = :1, NOTES = :2 WHERE TARGET_USERNAME = :3"
+            params = [new_status, notes, username]
+        else:
+            sql = "UPDATE PROSPECTS SET STATUS = :1 WHERE TARGET_USERNAME = :2"
+            params = [new_status, username]
+
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, [new_status, notes, username])
+                cursor.execute(sql, params)
                 connection.commit()
 
     def close(self):
