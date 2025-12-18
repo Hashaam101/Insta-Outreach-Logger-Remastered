@@ -30,3 +30,27 @@ Can be hosted on Streamlit Cloud (share repo, exclude sensitive env vars).
 
 ## Future Enhancements
 - **Granular Filtering**: Future updates will allow for filtering all metrics by **Operator** (to analyze human performance) versus **Actor** (to analyze account performance).
+
+## 🚀 Deployment & Maintenance
+
+The dashboard is deployed via a lightweight orphan branch named `streamlit-dashboard` (or `dashboard-deploy`) to keep dependencies minimal (avoiding the heavy backend dependencies like Playwright/Selenium that exist in the main branch).
+
+### How to Sync Updates from Main
+
+**⚠️ WARNING: DO NOT MERGE `main` INTO THIS BRANCH.**
+Merging `main` will pollute the environment with backend tools and desktop-specific dependencies.
+
+To update the dashboard code, use the following **Cherry-Pick Workflow**:
+
+```bash
+# 1. Switch to the dashboard branch
+git checkout streamlit-dashboard
+
+# 2. Pull specific files from main (Cherry-pick)
+git checkout main -- dashboard.py
+git checkout main -- requirements.txt
+
+# 3. Commit and Push
+git commit -m "Sync core logic from main"
+git push
+```

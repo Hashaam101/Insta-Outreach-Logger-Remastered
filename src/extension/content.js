@@ -1,5 +1,5 @@
 /**
- * Insta Outreach Logger - Content Script (v11 - Real-Time Status Check)
+ * Insta Outreach Logger - Content Script (v12 - Hardened Auto-Discovery)
  *
  * This script has three modes:
  * 1. Discovery Mode: If on instagram.com homepage with discover_actor param,
@@ -7,15 +7,21 @@
  * 2. Profile/DM Check Mode: On profile pages or DM threads, it checks the prospect
  *    status via IPC and shows a status banner.
  * 3. Logging Mode: On DM pages, it captures sent messages and logs them.
+ *
+ * v12 Enhancements:
+ * - MutationObserver for SPA navigation detection
+ * - Periodic actor username verification (detects account switching)
+ * - Auto-refresh banner when actor changes
  */
 
-console.log('[InstaLogger] Content Script Loaded (v11 - Real-Time Status Check)');
+console.log('[InstaLogger] Content Script Loaded (v12 - Hardened Auto-Discovery)');
 
 // =============================================================================
 // Globals & State
 // =============================================================================
 const CHAT_INPUT_SELECTOR = 'div[role="textbox"][aria-label="Message"]';
 const STATUS_REFRESH_INTERVAL = 30000; // Refresh status every 30 seconds
+const ACTOR_CHECK_INTERVAL = 5000; // Check for account switches every 5 seconds
 
 let activeChatInput = null;
 let lastCheckedUrl = '';
@@ -23,6 +29,8 @@ let lastCheckedUsername = '';
 let isCheckInProgress = false;
 let bannerPulseInterval = null;
 let statusRefreshInterval = null;
+let actorCheckInterval = null;
+let currentActorUsername = null; // Cached actor username for switch detection
 
 // Port connection to background script
 let port = null;
@@ -105,6 +113,147 @@ function runDiscovery() {
             console.error('[InstaLogger] Discovery FAILED: Could not find profile link after 5 seconds.');
         }
     }, 100);
+}
+
+// =============================================================================
+// 1b. Hardened Actor Discovery (SPA Account Switch Detection)
+// =============================================================================
+
+/**
+ * Scrapes the current viewer's username from the Instagram sidebar/navigation.
+ * This is used for periodic verification that the logged-in account hasn't changed.
+ */
+function scrapeCurrentViewerUsername() {
+    // Strategy 1: Look for profile link in the navigation sidebar
+    const profileLinks = Array.from(document.querySelectorAll('a[href^="/"]'));
+
+    for (const link of profileLinks) {
+        const href = link.getAttribute('href');
+        if (!href) continue;
+
+        // Look for links that have a profile image inside them (usually the nav profile link)
+        const hasProfileImg = link.querySelector('img[alt*="profile" i]') ||
+                             link.querySelector('img[data-testid="user-avatar"]');
+
+        if (hasProfileImg) {
+            const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+            if (match && match[1] && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'p'].includes(match[1])) {
+                return match[1];
+            }
+        }
+
+        // Look for "Profile" text link
+        if (link.textContent.trim().toLowerCase() === 'profile') {
+            const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+            if (match && match[1]) {
+                return match[1];
+            }
+        }
+    }
+
+    // Strategy 2: Check for the more options menu that contains profile link
+    const moreMenuLinks = document.querySelectorAll('a[href*="/accounts/"]');
+    for (const link of moreMenuLinks) {
+        const parent = link.closest('div[role="dialog"]') || link.closest('nav');
+        if (parent) {
+            const profileLink = parent.querySelector('a[href^="/"]:not([href*="/accounts/"])');
+            if (profileLink) {
+                const href = profileLink.getAttribute('href');
+                const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+                if (match && match[1] && !['explore', 'reels', 'inbox', 'direct'].includes(match[1])) {
+                    return match[1];
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Handles actor username switching.
+ * Called when we detect the logged-in account has changed.
+ */
+async function handleActorSwitch(newUsername) {
+    console.log(`[InstaLogger][Actor] Account switch detected: ${currentActorUsername} -> ${newUsername}`);
+
+    // Update the cached value
+    currentActorUsername = newUsername;
+
+    // Save to chrome storage
+    await chrome.storage.local.set({ actorUsername: newUsername });
+
+    // Notify the background script
+    sendMessageToBackground({
+        type: 'ACTOR_SWITCH',
+        payload: { old_actor: currentActorUsername, new_actor: newUsername }
+    });
+
+    // Refresh the current banner if we're on a profile/DM page
+    if (lastCheckedUsername && !isCheckInProgress) {
+        console.log(`[InstaLogger][Actor] Refreshing banner for ${lastCheckedUsername} with new actor ${newUsername}`);
+        runProfileCheck(lastCheckedUsername, true);
+    }
+}
+
+/**
+ * Periodically checks if the logged-in actor has changed (account switching).
+ * Instagram is an SPA, so users can switch accounts without a page reload.
+ */
+async function checkForActorSwitch() {
+    const scrapedUsername = scrapeCurrentViewerUsername();
+
+    if (!scrapedUsername) {
+        // Could not determine current user, skip this check
+        return;
+    }
+
+    // Get stored actor username
+    const stored = await chrome.storage.local.get('actorUsername');
+    const storedUsername = stored.actorUsername;
+
+    // Initialize currentActorUsername if not set
+    if (!currentActorUsername && storedUsername) {
+        currentActorUsername = storedUsername;
+    }
+
+    // Check for mismatch
+    if (storedUsername && scrapedUsername !== storedUsername) {
+        console.log(`[InstaLogger][Actor] Mismatch detected: stored=${storedUsername}, scraped=${scrapedUsername}`);
+        await handleActorSwitch(scrapedUsername);
+    } else if (!storedUsername && scrapedUsername) {
+        // First time setup - save the scraped username
+        console.log(`[InstaLogger][Actor] First-time actor discovery: ${scrapedUsername}`);
+        currentActorUsername = scrapedUsername;
+        await chrome.storage.local.set({ actorUsername: scrapedUsername });
+        sendMessageToBackground({ type: 'FOUND_ACTOR_USERNAME', username: scrapedUsername });
+    }
+}
+
+/**
+ * Starts the periodic actor verification check.
+ */
+function startActorVerification() {
+    if (actorCheckInterval) {
+        clearInterval(actorCheckInterval);
+    }
+
+    // Initial check
+    setTimeout(checkForActorSwitch, 1000);
+
+    // Periodic checks
+    actorCheckInterval = setInterval(checkForActorSwitch, ACTOR_CHECK_INTERVAL);
+    console.log('[InstaLogger][Actor] Started periodic actor verification');
+}
+
+/**
+ * Stops the periodic actor verification.
+ */
+function stopActorVerification() {
+    if (actorCheckInterval) {
+        clearInterval(actorCheckInterval);
+        actorCheckInterval = null;
+    }
 }
 
 // =============================================================================
@@ -207,7 +356,7 @@ function updateSyncStage(banner, stage) {
     stopBannerPulse();
     banner.style.boxShadow = '';
 
-    const allStages = ['sync-stage-local', 'sync-stage-cloud', 'sync-stage-downloading', 'sync-stage-complete', 'sync-stage-not-found', 'sync-stage-error'];
+    const allStages = ['sync-stage-local', 'sync-stage-cloud', 'sync-stage-downloading', 'sync-stage-complete', 'sync-stage-not-found', 'sync-stage-error', 'sync-stage-detection-failed'];
     banner.classList.remove(...allStages);
 
     if (stage) {
@@ -217,6 +366,7 @@ function updateSyncStage(banner, stage) {
         if (stage === 'local') startBannerPulse(banner, 245, 158, 11);
         else if (stage === 'downloading') startBannerPulse(banner, 16, 185, 129);
         else if (stage === 'error') startBannerPulse(banner, 239, 68, 68);
+        else if (stage === 'detection-failed') startBannerPulse(banner, 255, 69, 0);
     }
 }
 
@@ -244,6 +394,9 @@ async function showStatusBanner(state, data = {}) {
 
     if (data.syncStage) {
         banner.classList.add(`sync-stage-${data.syncStage}`);
+        if(data.syncStage === 'detection-failed') {
+             startBannerPulse(banner, 255, 69, 0);
+        }
     }
 
     let isDraggable = false;
@@ -327,12 +480,8 @@ async function showStatusBanner(state, data = {}) {
 
     setTimeout(() => banner.classList.add('visible'), 10);
 
-    if (state === 'searching') {
-        setTimeout(() => {
-            banner.classList.remove('visible');
-            setTimeout(() => banner.remove(), 500);
-        }, 3000);
-    }
+    // REMOVED: Automatic cleanup of 'searching' banner. 
+    // It should stay until success or explicit failure.
 }
 
 async function updateProspectStatus(username, newStatus, dropdown) {
@@ -373,42 +522,82 @@ async function updateProspectStatus(username, newStatus, dropdown) {
 
 function getInstagramUsername(inputElement) {
     console.log("[InstaLogger] Running Proximity Climber strategy...");
-    let currentElement = inputElement;
-    for (let i = 0; i < 25 && currentElement; i++) {
-        const links = currentElement.querySelectorAll('a');
-        for (const link of links) {
-            if (!link.href) continue;
-            try {
-                const path = new URL(link.href).pathname;
-                const isNotSpecialRoute = path !== '/' &&
-                                      !path.startsWith('/direct/') &&
-                                      !path.startsWith('/explore/') &&
-                                      !path.startsWith('/reels/') &&
-                                      !path.startsWith('/stories/');
-                if (isNotSpecialRoute) {
-                    let isMatch = false;
-                    if (link.innerText && link.innerText.toLowerCase().includes('view profile')) {
-                        isMatch = true;
-                    }
-                    else if (/^\/[a-zA-Z0-9_.]+\/?$/.test(path)) {
-                        isMatch = true;
-                    }
-
-                    if (isMatch) {
-                        const username = path.split('/').filter(p => p)[0];
-                        if (username) {
-                            console.log(`[InstaLogger] SUCCESS: Found username "${username}" (Level ${i}).`);
-                            return username;
+    
+    // Strategy 1: Climb up from input element (Legacy, good for active chats)
+    if (inputElement) {
+        let currentElement = inputElement;
+        for (let i = 0; i < 25 && currentElement; i++) {
+            const links = currentElement.querySelectorAll('a');
+            for (const link of links) {
+                if (!link.href) continue;
+                try {
+                    const path = new URL(link.href).pathname;
+                    const isNotSpecialRoute = path !== '/' &&
+                                          !path.startsWith('/direct/') &&
+                                          !path.startsWith('/explore/') &&
+                                          !path.startsWith('/reels/') &&
+                                          !path.startsWith('/stories/');
+                    if (isNotSpecialRoute) {
+                        let isMatch = false;
+                        if (link.innerText && link.innerText.toLowerCase().includes('view profile')) {
+                            isMatch = true;
+                        }
+                        else if (/^\/[a-zA-Z0-9_.]+\/?$/.test(path)) {
+                            isMatch = true;
+                        }
+    
+                        if (isMatch) {
+                            const username = path.split('/').filter(p => p)[0];
+                            if (username) {
+                                console.log(`[InstaLogger] SUCCESS: Found username "${username}" (Level ${i}).`);
+                                return username;
+                            }
                         }
                     }
+                } catch (e) {
+                    // Ignore invalid hrefs
                 }
-            } catch (e) {
-                // Ignore invalid hrefs
+            }
+            currentElement = currentElement.parentElement;
+        }
+    }
+
+    // Strategy 2: Header Scraping (Fallback for "Message Request Sent" or missing input)
+    console.log("[InstaLogger] Proximity Climber failed. Trying Header Scraping...");
+    
+    // Try to find the chat header. It's usually a header tag or a specific div at the top of main.
+    // We look for a link that looks like a profile link inside the main content area.
+    const mainContent = document.querySelector('div[role="main"]');
+    if (mainContent) {
+        const headerLinks = mainContent.querySelectorAll('header a[href^="/"]');
+        for (const link of headerLinks) {
+             const href = link.getAttribute('href');
+             // Validate it's a profile link (not /direct, /explore, etc.)
+             const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+             if (match && match[1] && !['explore', 'direct', 'reels', 'stories'].includes(match[1])) {
+                 console.log(`[InstaLogger] SUCCESS: Found username "${match[1]}" in header.`);
+                 return match[1];
+             }
+        }
+        
+        // Sometimes the header doesn't use <header>, look for the first H2 or active element
+        const headerTitle = mainContent.querySelector('h2');
+        if (headerTitle) {
+            const text = headerTitle.textContent;
+            // Simple validation: username usually doesn't have spaces (unless it's a full name, but header is usually username)
+            // Actually, Instagram header often shows Full Name or Username.
+            // Let's rely on the link wrapper usually present around the image or name.
+            const parentLink = headerTitle.closest('a');
+            if (parentLink) {
+                 const href = parentLink.getAttribute('href');
+                 const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+                 if (match && match[1]) return match[1];
             }
         }
-        currentElement = currentElement.parentElement;
     }
-    console.log("[InstaLogger] Proximity Climber failed. Falling back to URL check.");
+
+    // Fallback: URL check
+    console.log("[InstaLogger] Header Scraping failed. Falling back to URL check.");
     const pagePath = window.location.pathname;
     const pathParts = pagePath.split('/').filter(p => p);
     if (pathParts.length === 1 && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'login'].includes(pathParts[0])) {
@@ -527,7 +716,7 @@ async function runProfileCheck(username, silentRefresh = false) {
     });
 }
 
-function waitForElement(selector, callback, timeout = 5000, interval = 200) {
+function waitForElement(selector, callback, timeout = 5000, interval = 200, onTimeout = null) {
     const startTime = Date.now();
     const timer = setInterval(() => {
         const element = document.querySelector(selector);
@@ -537,6 +726,7 @@ function waitForElement(selector, callback, timeout = 5000, interval = 200) {
         } else if (Date.now() - startTime > timeout) {
             clearInterval(timer);
             console.log(`[InstaLogger] Timed out waiting for element: ${selector}`);
+            if (onTimeout) onTimeout();
         }
     }, interval);
 }
@@ -556,7 +746,7 @@ async function getActorUsername() {
 }
 
 function getTargetUsername(inputElement) {
-    if (!inputElement) return 'unknown_target';
+    if (!inputElement) return null; // Return null instead of 'unknown_target' for easier fallback check
     let currentElement = inputElement;
     for (let i = 0; i < 25 && currentElement; i++) {
         const links = currentElement.querySelectorAll('a[href]');
@@ -571,7 +761,7 @@ function getTargetUsername(inputElement) {
         }
         currentElement = currentElement.parentElement;
     }
-    return "unknown_target";
+    return null;
 }
 
 async function logOutreach(inputElement) {
@@ -579,10 +769,20 @@ async function logOutreach(inputElement) {
     if (!messageText || !messageText.trim()) return;
 
     const actorUsername = await getActorUsername();
-    const targetUsername = getTargetUsername(inputElement);
+    
+    // Primary strategy: Proximity climb (rarely works in DMs due to DOM structure)
+    let targetUsername = getTargetUsername(inputElement);
+    
+    // Fallback strategy: Use the globally tracked username from the banner check
+    // This is much more reliable in DMs because we found it from the Header
+    if (!targetUsername && lastCheckedUsername && lastCheckedUsername !== "unknown_target" && lastCheckedUsername !== "not_in_a_dm_thread") {
+        console.log(`[InstaLogger] Proximity climb failed. Using cached username: ${lastCheckedUsername}`);
+        targetUsername = lastCheckedUsername;
+    }
+
     const messageSnippet = messageText.trim().substring(0, 200);
 
-    if (targetUsername === 'unknown_target' || actorUsername === 'unknown_actor') {
+    if (!targetUsername || targetUsername === 'unknown_target' || actorUsername === 'unknown_actor') {
         console.error(`[InstaLogger] Aborting log. Target: ${targetUsername}, Actor: ${actorUsername}`);
         return;
     }
@@ -628,12 +828,15 @@ function findAndAttach() {
         }
         chatInput.addEventListener('keydown', handleKeyDown, { capture: true });
         activeChatInput = chatInput;
+        console.log("[InstaLogger] Attached logging listener to chat input.");
     }
 }
 
 // =============================================================================
 // 5. URL Change Handler (Main Router)
 // =============================================================================
+
+let dmDiscoveryInterval = null;
 
 const handleUrlChange = () => {
     const currentUrl = window.location.href;
@@ -647,8 +850,12 @@ const handleUrlChange = () => {
         isCheckInProgress = false;
     }
 
-    // Stop any existing refresh interval
+    // Stop any existing refresh interval or DM discovery
     stopStatusRefresh();
+    if (dmDiscoveryInterval) {
+        clearInterval(dmDiscoveryInterval);
+        dmDiscoveryInterval = null;
+    }
 
     // Remove any existing banners
     document.querySelectorAll('.insta-warning-banner').forEach(b => b.remove());
@@ -659,19 +866,62 @@ const handleUrlChange = () => {
     let username = null;
 
     const profileMatch = currentUrl.match(profileRegex);
+    
+    // --- CASE 1: Profile Page ---
     if (profileMatch && profileMatch[1] && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'login', 'p'].includes(profileMatch[1])) {
         username = profileMatch[1];
         lastCheckedUsername = username;
         runProfileCheck(username);
-    } else if (directRegex.test(currentUrl)) {
+    } 
+    // --- CASE 2: Direct Message Thread ---
+    else if (directRegex.test(currentUrl)) {
         showStatusBanner('searching', { syncStage: 'local' });
-        waitForElement(CHAT_INPUT_SELECTOR, (chatInput) => {
-            const dmUsername = getInstagramUsername(chatInput);
-            if (dmUsername && dmUsername !== "unknown_user_in_thread" && dmUsername !== "not_in_a_dm_thread") {
+        
+        console.log("[InstaLogger] Entered DM Thread. Starting username polling...");
+        
+        let attempts = 0;
+        const maxAttempts = 20; // 10 seconds (20 * 500ms)
+        
+        // Start polling for the username
+        // We poll because the DOM might not have updated the header yet
+        dmDiscoveryInterval = setInterval(() => {
+            attempts++;
+            
+            // Check if user navigated away while polling
+            if (window.location.href !== currentUrl) {
+                clearInterval(dmDiscoveryInterval);
+                return;
+            }
+
+            // Use a more generic selector for the chat container to ensure we don't fail just because input is missing
+            const chatContainer = document.querySelector('div[role="main"]');
+            const chatInput = document.querySelector(CHAT_INPUT_SELECTOR);
+            
+            // Try to find username
+            const dmUsername = getInstagramUsername(chatInput || chatContainer);
+            
+            if (dmUsername && 
+                dmUsername !== "unknown_user_in_thread" && 
+                dmUsername !== "not_in_a_dm_thread") {
+                
+                // SUCCESS
+                console.log(`[InstaLogger] Polling SUCCESS: Found DM username "${dmUsername}" after ${attempts} attempts.`);
+                clearInterval(dmDiscoveryInterval);
+                dmDiscoveryInterval = null;
+                
                 lastCheckedUsername = dmUsername;
                 runProfileCheck(dmUsername);
+                
+            } else if (attempts >= maxAttempts) {
+                // FAILURE
+                console.log("[InstaLogger] Polling FAILED: Could not detect username in DM thread.");
+                clearInterval(dmDiscoveryInterval);
+                dmDiscoveryInterval = null;
+                
+                const banner = document.getElementById('insta-warning-banner');
+                updateSyncStage(banner, 'detection-failed');
             }
-        });
+        }, 500); // Check every 500ms
     }
 };
 
@@ -689,11 +939,41 @@ function initialize() {
         return;
     }
 
-    // Set up URL change observer
+    // Start hardened actor verification (detects account switching)
+    startActorVerification();
+
+    // Set up URL change observer for SPA navigation
     const observer = new MutationObserver(() => {
         setTimeout(handleUrlChange, 50);
     });
     observer.observe(document.body, { childList: true, subtree: true });
+
+    // Also observe for significant DOM changes that might indicate account switch
+    const accountSwitchObserver = new MutationObserver((mutations) => {
+        // Look for mutations that might indicate account switch
+        // (e.g., navigation rail changes, profile picture changes)
+        for (const mutation of mutations) {
+            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                for (const node of mutation.addedNodes) {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        // Check if this is a nav element or contains user info
+                        if (node.matches && (
+                            node.matches('nav') ||
+                            node.querySelector && node.querySelector('img[alt*="profile" i]')
+                        )) {
+                            // Trigger an actor check
+                            setTimeout(checkForActorSwitch, 500);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Observe the nav/sidebar area specifically if it exists
+    const navElement = document.querySelector('nav') || document.body;
+    accountSwitchObserver.observe(navElement, { childList: true, subtree: true });
 
     // Attach DM logging listeners
     setInterval(findAndAttach, 1000);
@@ -719,12 +999,26 @@ function initialize() {
             console.log(`[InstaLogger][UI] Page load - DM thread detected`);
             lastCheckedUrl = currentUrl;
             showStatusBanner('searching', { syncStage: 'local' });
-            waitForElement(CHAT_INPUT_SELECTOR, (chatInput) => {
-                const dmUsername = getInstagramUsername(chatInput);
+            
+             // Use a more generic selector for the chat container to ensure we don't fail just because input is missing
+            const CHAT_CONTAINER = 'div[role="main"]';
+            
+            waitForElement(CHAT_CONTAINER, (element) => {
+                const chatInput = document.querySelector(CHAT_INPUT_SELECTOR);
+                const dmUsername = getInstagramUsername(chatInput || element);
                 if (dmUsername && dmUsername !== "unknown_user_in_thread" && dmUsername !== "not_in_a_dm_thread") {
                     lastCheckedUsername = dmUsername;
                     runProfileCheck(dmUsername);
+                } else {
+                     console.log("[InstaLogger] Could not detect username in DM thread (Page Load).");
+                     const banner = document.getElementById('insta-warning-banner');
+                     updateSyncStage(banner, 'detection-failed');
                 }
+            }, 5000, 200, () => {
+                // Timeout callback
+                console.log("[InstaLogger] Timeout waiting for chat container (Page Load).");
+                const banner = document.getElementById('insta-warning-banner');
+                updateSyncStage(banner, 'detection-failed');
             });
         }
     }, 300);

@@ -346,3 +346,14 @@ body.insta-logger-dragging {
     0%, 100% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.3); }
     50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.8); }
 }
+
+/* Stage 7: Detection Failed - Red/Orange pulsing */
+.insta-warning-banner.sync-stage-detection-failed {
+    border: 3px solid #ff4500 !important;
+    box-shadow: 0 0 10px rgba(255, 69, 0, 0.5) !important;
+}
+
+@keyframes pulse-detection-failed {
+    0%, 100% { box-shadow: 0 0 10px rgba(255, 69, 0, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(255, 69, 0, 0.8); }
+}

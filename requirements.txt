@@ -1,3 +1,9 @@
 streamlit
 pandas
 oracledb
+jinja2
+openpyxl
+customtkinter
+tkinterdnd2
+cryptography
+matplotlib

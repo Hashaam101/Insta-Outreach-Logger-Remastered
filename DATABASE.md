@@ -1,89 +1,130 @@
-# 🗄️ Oracle Cloud Database Schema
+# 🗄️ Database Schemas
 
-- **Service**: Oracle Autonomous Transaction Processing (ATP)
-- **Tier**: Always Free
-- **Connection**: `python-oracledb` (Thin Mode) with Wallet (mTLS).
+## ☁️ Oracle Cloud Database (ATP)
+**Tier**: Always Free
+**Connection**: `python-oracledb` (Thin Mode) with Wallet (mTLS).
+
+### 1. `OPERATORS`
+The human team members.
+
+| Column          | Type            | Constraints | Description |
+| :-------------- | :-------------- | :---------- | :---------- |
+| `operator_name` | `VARCHAR2(100)` | **PK**      | Unique name (e.g., "Sarah"). |
+| `created_at`    | `TIMESTAMP`     | Default Now | Registration time. |
+
+### 2. `ACTORS`
+The Instagram Accounts (Sender Profiles).
+
+| Column           | Type            | Constraints        | Description |
+| :--------------- | :-------------- | :----------------- | :---------- |
+| `USERNAME`       | `VARCHAR2(100)` | **PK**             | IG Handle. |
+| `OWNER_OPERATOR` | `VARCHAR2(100)` | **FK** -> `OPERATORS` | Who owns this account. |
+| `STATUS`         | `VARCHAR2(50)`  | Default 'active'   | Account health. |
+| `CREATED_AT`     | `TIMESTAMP`     | Default Now        | |
+
+### 3. `PROSPECTS` (Core CRM)
+The master list of leads. Syncs via `LAST_UPDATED`.
+
+| Column            | Type            | Constraints          | Description |
+| :---------------- | :-------------- | :------------------- | :---------- |
+| `TARGET_USERNAME` | `VARCHAR2(255)` | **PK**               | Lead's IG Handle. |
+| `STATUS`          | `VARCHAR2(50)`  | Default `'new'`      | CRM Status (Cold, Warm, etc). |
+| `OWNER_ACTOR`     | `VARCHAR2(100)` | **FK** -> `ACTORS`   | Finding account. |
+| `NOTES`           | `VARCHAR2(4000)`|                      | CRM notes. |
+| `FIRST_CONTACTED` | `TIMESTAMP`     |                      | First message time. |
+| `LAST_UPDATED`    | `TIMESTAMP`     | Default Now          | **Critical for Delta Sync.** |
+
+### 4. `OUTREACH_LOGS` (Analytics)
+Append-only log of every message sent.
+
+| Column            | Type             | Constraints          | Description |
+| :---------------- | :--------------- | :------------------- | :---------- |
+| `LOG_ID`          | `NUMBER`         | **PK**, Identity     | Auto-inc ID. |
+| `ACTOR_USERNAME`  | `VARCHAR2(100)`  | **FK** -> `ACTORS`   | Sender. |
+| `TARGET_USERNAME` | `VARCHAR2(255)`  | **FK** -> `PROSPECTS`| Receiver. |
+| `MESSAGE_TEXT`    | `VARCHAR2(4000)` |                      | Message content. |
+| `CREATED_AT`      | `TIMESTAMP`      | Default Now          | |
 
 ---
 
-## 1. Tables
+## 💻 Local Database (SQLite)
+**File**: `local_data.db` (Created at runtime)
 
-### `ACTORS`
+### 1. `prospects`
+Local cache of the global prospects list.
 
-Stores the Instagram Accounts (Sender Profiles) and their human owner.
+| Column            | Type   | Description |
+| :---------------- | :----- | :---------- |
+| `target_username` | TEXT   | PK. |
+| `status`          | TEXT   | Local copy of status. |
+| `owner_actor`     | TEXT   | Local copy of owner. |
+| `notes`           | TEXT   | Local copy of notes. |
+| `last_updated`    | TEXT   | ISO Timestamp from Oracle. |
 
-| Column           | Type          | Constraints | Description                         |
-| :--------------- | :------------ | :---------- | :---------------------------------- |
-| `USERNAME`       | `VARCHAR2(255)` | **PK**      | IG Handle (e.g., "brand_official"). |
-| `STATUS`         | `VARCHAR2(50)`  | Default 'active' | Current status (e.g., active, suspended). |
-| `OWNER_OPERATOR` | `VARCHAR2(255)` |             | The human Operator who owns this Actor. |
+### 2. `outreach_logs`
+Offline queue for new messages.
 
-### `PROSPECTS` (Core CRM)
+| Column            | Type    | Description |
+| :---------------- | :------ | :---------- |
+| `id`              | INTEGER | PK, Auto-inc. |
+| `target_username` | TEXT    | |
+| `actor_username`  | TEXT    | |
+| `operator_name`   | TEXT    | |
+| `message_snippet` | TEXT    | |
+| `timestamp`       | TEXT    | ISO Timestamp. |
+| `synced_to_cloud` | INTEGER | 0 = Pending, 1 = Synced. |
 
-The master list of leads. One row per target Instagram user.
+### 3. `meta`
+Configuration storage.
 
-| Column            | Type            | Constraints          | Description                               |
-| :---------------- | :-------------- | :------------------- | :---------------------------------------- |
-| `TARGET_USERNAME` | `VARCHAR2(255)`   | **PK**               | The Lead's IG Handle.                     |
-| `STATUS`          | `VARCHAR2(50)`    | Default `'new'`      | Current CRM Status.                       |
-| `OWNER_ACTOR`     | `VARCHAR2(255)`   | **FK** -> `ACTORS`   | Which of our accounts found this lead.    |
-| `FIRST_CONTACTED` | `TIMESTAMP`     | Default `CURRENT_TIMESTAMP` |                                           |
-| `NOTES`           | `VARCHAR2(1000)`  |                      | CRM notes for this prospect.              |
-
-### `OUTREACH_LOGS` (Analytics)
-
-An append-only log of every message sent. Used for "Daily Activity" dashboards.
-
-| Column            | Type             | Constraints          | Description                       |
-| :---------------- | :--------------- | :------------------- | :-------------------------------- |
-| `LOG_ID`          | `NUMBER`         | **PK**, Identity     | Auto-incrementing ID.             |
-| `ACTOR_USERNAME`  | `VARCHAR2(255)`    | **FK** -> `ACTORS`   | The Actor who sent the message.   |
-| `TARGET_USERNAME` | `VARCHAR2(255)`    | **FK** -> `PROSPECTS` | The Prospect who received the message. |
-| `MESSAGE_TEXT`    | `VARCHAR2(2000)` |                      | Full text of the sent message.    |
-| `CREATED_AT`      | `TIMESTAMP`      | Default `CURRENT_TIMESTAMP` |                                   |
+| Column | Type | Description |
+| :----- | :--- | :---------- |
+| `key`  | TEXT | PK (e.g., 'last_cloud_sync'). |
+| `value`| TEXT | Value (e.g., '2023-10-27T10:00:00'). |
 
 ---
 
-## ⚡ Setup Script (SQL)
+## ⚡ Initialization SQL
 
-Run this in **Oracle Database Actions (SQL Worksheet)** to initialize the DB.
+Run this in Oracle SQL Worksheet to reset schema (use `src/core/factory_reset.py` for automated reset).
 
 ```sql
 DROP TABLE OUTREACH_LOGS CASCADE CONSTRAINTS;
 DROP TABLE PROSPECTS CASCADE CONSTRAINTS;
 DROP TABLE ACTORS CASCADE CONSTRAINTS;
+DROP TABLE OPERATORS CASCADE CONSTRAINTS;
+
+CREATE TABLE OPERATORS (
+    operator_name VARCHAR2(100) NOT NULL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE ACTORS (
-    USERNAME VARCHAR2(255) PRIMARY KEY,
+    USERNAME VARCHAR2(100) NOT NULL PRIMARY KEY,
+    OWNER_OPERATOR VARCHAR2(100),
     STATUS VARCHAR2(50) DEFAULT 'active',
-    OWNER_OPERATOR VARCHAR2(255)
+    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_actor_operator FOREIGN KEY (OWNER_OPERATOR) REFERENCES OPERATORS(operator_name)
 );
 
 CREATE TABLE PROSPECTS (
-    TARGET_USERNAME VARCHAR2(255) PRIMARY KEY,
+    TARGET_USERNAME VARCHAR2(255) NOT NULL PRIMARY KEY,
     STATUS VARCHAR2(50) DEFAULT 'new',
-    OWNER_ACTOR VARCHAR2(255),
-    FIRST_CONTACTED TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    NOTES VARCHAR2(1000)
+    OWNER_ACTOR VARCHAR2(100),
+    NOTES VARCHAR2(4000),
+    FIRST_CONTACTED TIMESTAMP,
+    LAST_UPDATED TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_prospect_owner FOREIGN KEY (OWNER_ACTOR) REFERENCES ACTORS(USERNAME)
 );
 
 CREATE TABLE OUTREACH_LOGS (
-    LOG_ID NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    ACTOR_USERNAME VARCHAR2(255),
+    LOG_ID NUMBER GENERATED BY DEFAULT ON NULL AS IDENTITY PRIMARY KEY,
     TARGET_USERNAME VARCHAR2(255),
-    MESSAGE_TEXT VARCHAR2(2000),
+    ACTOR_USERNAME VARCHAR2(100),
+    MESSAGE_TEXT VARCHAR2(4000),
     CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_log_actor FOREIGN KEY (ACTOR_USERNAME) REFERENCES ACTORS(USERNAME),
-    CONSTRAINT fk_log_target FOREIGN KEY (TARGET_USERNAME) REFERENCES PROSPECTS(TARGET_USERNAME)
+    CONSTRAINT fk_log_target FOREIGN KEY (TARGET_USERNAME) REFERENCES PROSPECTS(TARGET_USERNAME),
+    CONSTRAINT fk_log_actor FOREIGN KEY (ACTOR_USERNAME) REFERENCES ACTORS(USERNAME)
 );
-
--- Indexes for performance
--- No longer needed, as the data volume does not necessitate explicit index creation
--- for this simplified schema and usage patterns.
-
--- Seed Data (For Testing) - These are examples, use src/scripts/reset_and_seed.py for full seed
--- INSERT INTO ACTORS (USERNAME, OWNER_OPERATOR) VALUES ('hashaam_growth', 'Hashaam');
--- INSERT INTO PROSPECTS (TARGET_USERNAME, OWNER_ACTOR, STATUS) VALUES ('pizza_place_ny', 'hashaam_growth', 'new');
--- INSERT INTO OUTREACH_LOGS (ACTOR_USERNAME, TARGET_USERNAME, MESSAGE_TEXT) VALUES ('hashaam_growth', 'pizza_place_ny', 'Sample message.');
 COMMIT;
 ```
