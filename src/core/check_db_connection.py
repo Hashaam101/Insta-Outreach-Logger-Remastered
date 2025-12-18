@@ -28,23 +28,26 @@ def test_connection():
             password=local_config.DB_PASSWORD,
             dsn=local_config.DB_DSN,
             config_dir=os.path.join(project_root, 'assets', 'wallet'), 
-            wallet_location=os.path.join(project_root, 'assets', 'wallet'),
-            wallet_password=local_config.DB_PASSWORD  # Usually wallet pass is same as DB pass for ATP
+            wallet_location=os.path.join(project_root, 'assets', 'wallet')
         )
         
         print('✅ Connected successfully!')
         print('Server Version:', connection.version)
         
         cursor = connection.cursor()
-        cursor.execute('SELECT * FROM OPERATORS')
+        cursor.execute('SELECT * FROM operators')
         rows = cursor.fetchall()
         print(f'Found {len(rows)} operators: {rows}')
         
         connection.close()
         
     except oracledb.Error as e:
-        error_obj = e.args[0]
-        print(f'❌ Connection Failed: {error_obj.message}')
+        # Check if e.args exists and has elements
+        if e.args:
+            error_obj = e.args[0]
+            print(f'❌ Connection Failed: {error_obj.message}')
+        else:
+            print(f'❌ Connection Failed: {e}')
 
 if __name__ == '__main__':
     test_connection()

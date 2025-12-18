@@ -3,8 +3,16 @@ import os
 import sys
 import pandas as pd
 
-# Add the project root to the Python path to allow importing 'secrets'
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+# Define PROJECT_ROOT for both frozen (PyInstaller) and dev environments
+if getattr(sys, 'frozen', False):
+    # Running as compiled exe - root is the exe directory
+    PROJECT_ROOT = os.path.dirname(sys.executable)
+else:
+    # Running as script - root is 2 levels up from src/core/
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+# Add the project root to the Python path to allow importing 'local_config'
+sys.path.insert(0, PROJECT_ROOT)
 
 try:
     import local_config as secrets
@@ -17,7 +25,7 @@ class DatabaseManager:
         """
         Initializes the DatabaseManager, setting up the connection to the Oracle database.
         """
-        wallet_location = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'wallet'))
+        wallet_location = os.path.join(PROJECT_ROOT, 'assets', 'wallet')
         
         if not os.path.exists(wallet_location) or not os.listdir(wallet_location):
             raise FileNotFoundError(f"Wallet directory is empty or not found at {wallet_location}")
@@ -98,9 +106,19 @@ class DatabaseManager:
     def ensure_actor_exists(self, actor_username, operator_name):
         """
         Checks if an actor exists and creates it if not. Part of Auto-Discovery.
+        Also ensures the Operator exists in the operators table.
         """
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
+                # 1. Ensure Operator Exists
+                cursor.execute("SELECT count(*) FROM operators WHERE operator_name = :1", [operator_name])
+                if cursor.fetchone()[0] == 0:
+                    print(f"[OracleDB] Operator '{operator_name}' not found. Creating...")
+                    cursor.execute("INSERT INTO operators (operator_name) VALUES (:1)", [operator_name])
+                    # We commit here to ensure the parent key exists for the next insert
+                    connection.commit()
+
+                # 2. Ensure Actor Exists
                 cursor.execute("SELECT COUNT(*) FROM ACTORS WHERE USERNAME = :1", [actor_username])
                 exists = cursor.fetchone()[0] > 0
                 if not exists:
@@ -125,9 +143,11 @@ class DatabaseManager:
             MERGE INTO PROSPECTS p
             USING (SELECT :target_username AS TARGET_USERNAME, :owner_actor AS OWNER_ACTOR FROM dual) new
             ON (p.TARGET_USERNAME = new.TARGET_USERNAME)
+            WHEN MATCHED THEN
+                UPDATE SET LAST_UPDATED = CURRENT_TIMESTAMP
             WHEN NOT MATCHED THEN
-                INSERT (TARGET_USERNAME, OWNER_ACTOR, STATUS)
-                VALUES (new.TARGET_USERNAME, new.OWNER_ACTOR, 'new')
+                INSERT (TARGET_USERNAME, OWNER_ACTOR, STATUS, LAST_UPDATED)
+                VALUES (new.TARGET_USERNAME, new.OWNER_ACTOR, 'new', CURRENT_TIMESTAMP)
         """
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
@@ -190,16 +210,55 @@ class DatabaseManager:
         Updates the status and notes for a given prospect.
         """
         if notes is not None:
-            sql = "UPDATE PROSPECTS SET STATUS = :1, NOTES = :2 WHERE TARGET_USERNAME = :3"
+            sql = "UPDATE PROSPECTS SET STATUS = :1, NOTES = :2, LAST_UPDATED = CURRENT_TIMESTAMP WHERE TARGET_USERNAME = :3"
             params = [new_status, notes, username]
         else:
-            sql = "UPDATE PROSPECTS SET STATUS = :1 WHERE TARGET_USERNAME = :2"
+            sql = "UPDATE PROSPECTS SET STATUS = :1, LAST_UPDATED = CURRENT_TIMESTAMP WHERE TARGET_USERNAME = :2"
             params = [new_status, username]
 
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql, params)
                 connection.commit()
+
+    def fetch_prospects_updates(self, since_timestamp=None):
+        """
+        Fetches prospect statuses updated after the given timestamp.
+        
+        Args:
+            since_timestamp: ISO format string or datetime object.
+            
+        Returns:
+            List of dicts: {'target_username', 'status', 'owner_actor', 'notes', 'last_updated'}
+        """
+        if since_timestamp:
+            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED FROM PROSPECTS WHERE LAST_UPDATED > :1"
+            # Ensure timestamp is in a format Oracle likes (datetime object)
+            if isinstance(since_timestamp, str):
+                try:
+                    since_timestamp = pd.to_datetime(since_timestamp)
+                except:
+                    pass
+            params = [since_timestamp]
+        else:
+            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED FROM PROSPECTS"
+            params = []
+
+        with self.get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+                # Convert to list of dicts
+                return [
+                    {
+                        'target_username': row[0],
+                        'status': row[1],
+                        'owner_actor': row[2],
+                        'notes': row[3],
+                        'last_updated': row[4]
+                    }
+                    for row in rows
+                ]
 
     def close(self):
         """Closes the connection pool."""

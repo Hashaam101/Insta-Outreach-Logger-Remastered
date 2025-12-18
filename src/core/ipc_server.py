@@ -10,6 +10,10 @@ import threading
 import json
 import traceback
 import os
+import sys
+
+# Add the current directory to path for sibling imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from local_db import LocalDatabase
 from sync_engine import SyncEngine
@@ -23,9 +27,15 @@ from ipc_protocol import (
     MessageType
 )
 
-# Define path for operator config
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
-OPERATOR_CONFIG_PATH = os.path.join(project_root, 'operator_config.json')
+# Define path for operator config - handle both frozen (PyInstaller) and dev environments
+if getattr(sys, 'frozen', False):
+    # Running as compiled exe - config is in the exe directory
+    PROJECT_ROOT = os.path.dirname(sys.executable)
+else:
+    # Running as script - config is in project root (2 levels up from src/core/)
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
+
+OPERATOR_CONFIG_PATH = os.path.join(PROJECT_ROOT, 'operator_config.json')
 
 
 class IPCServer:

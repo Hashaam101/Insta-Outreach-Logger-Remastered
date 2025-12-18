@@ -10,8 +10,17 @@ AI Agent Note: This is Phase 3 - The Brain (Local Logic)
 
 import sqlite3
 import os
+import sys
 import json
 from datetime import datetime, timezone
+
+# Define PROJECT_ROOT for both frozen (PyInstaller) and dev environments
+if getattr(sys, 'frozen', False):
+    # Running as compiled exe - root is the exe directory
+    PROJECT_ROOT = os.path.dirname(sys.executable)
+else:
+    # Running as script - root is 2 levels up from src/core/
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
 class LocalDatabase:
@@ -29,12 +38,11 @@ class LocalDatabase:
 
         Args:
             db_path: Optional custom path. Defaults to 'local_data.db' in
-                     the same directory as this script.
+                     the project root (or exe directory when frozen).
         """
         if db_path is None:
             # Default: Place DB in the project root or alongside the executable
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            db_path = os.path.join(base_dir, "local_data.db")
+            db_path = os.path.join(PROJECT_ROOT, "local_data.db")
 
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -56,9 +64,22 @@ class LocalDatabase:
             CREATE TABLE IF NOT EXISTS prospects (
                 target_username TEXT PRIMARY KEY,
                 status TEXT DEFAULT 'Cold_NoReply',
+                owner_actor TEXT,
+                notes TEXT,
                 last_updated TEXT
             )
         """)
+
+        # Migration: Ensure new columns exist for existing databases
+        try:
+            self.cursor.execute("ALTER TABLE prospects ADD COLUMN owner_actor TEXT")
+        except sqlite3.OperationalError:
+            pass # Column already exists
+
+        try:
+            self.cursor.execute("ALTER TABLE prospects ADD COLUMN notes TEXT")
+        except sqlite3.OperationalError:
+            pass # Column already exists
 
         # Outreach logs table - append-only message log with sync tracking
         self.cursor.execute("""
@@ -79,7 +100,77 @@ class LocalDatabase:
             ON outreach_logs(synced_to_cloud) WHERE synced_to_cloud = 0
         """)
 
+        # Meta table for storing sync timestamps and other persistent config
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
         self.conn.commit()
+
+    def get_last_sync_timestamp(self) -> str:
+        """
+        Retrieves the timestamp of the last successful cloud sync.
+        Returns: ISO format string or None.
+        """
+        self.cursor.execute("SELECT value FROM meta WHERE key = 'last_cloud_sync'")
+        row = self.cursor.fetchone()
+        return row['value'] if row else None
+
+    def set_last_sync_timestamp(self, timestamp: str):
+        """
+        Updates the last successful cloud sync timestamp.
+        """
+        self.cursor.execute("""
+            INSERT INTO meta (key, value) VALUES ('last_cloud_sync', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, (timestamp,))
+        self.conn.commit()
+
+    def sync_prospects_from_cloud(self, cloud_prospects: list):
+        """
+        Bulk updates local prospect cache with data from Oracle Cloud.
+        
+        Args:
+            cloud_prospects: List of dicts from Oracle {'target_username', 'status', 'owner_actor', 'notes'}
+        """
+        if not cloud_prospects:
+            return
+
+        print(f"[LocalDB] Syncing {len(cloud_prospects)} prospects from cloud...")
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Prepare data for executemany
+        data_to_insert = []
+        for p in cloud_prospects:
+            data_to_insert.append((
+                p['target_username'],
+                p['status'],
+                p.get('owner_actor'), # Use .get() in case key is missing
+                p.get('notes'),
+                now
+            ))
+
+        # Bulk upsert (replace)
+        # We use INSERT OR REPLACE (or upsert syntax) to update local state
+        sql = """
+            INSERT INTO prospects (target_username, status, owner_actor, notes, last_updated)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(target_username) DO UPDATE SET
+                status = excluded.status,
+                owner_actor = excluded.owner_actor,
+                notes = excluded.notes,
+                last_updated = excluded.last_updated
+        """
+        
+        try:
+            self.cursor.executemany(sql, data_to_insert)
+            self.conn.commit()
+            print(f"[LocalDB] Cloud sync applied successfully.")
+        except Exception as e:
+            print(f"[LocalDB] Error applying cloud sync: {e}")
 
     def log_outreach(self, log_data: dict) -> int:
         """
@@ -176,7 +267,7 @@ class LocalDatabase:
             Dict with prospect data, or None if not found.
         """
         self.cursor.execute("""
-            SELECT target_username, status, last_updated
+            SELECT target_username, status, owner_actor, notes, last_updated
             FROM prospects
             WHERE target_username = ?
         """, (target_username,))

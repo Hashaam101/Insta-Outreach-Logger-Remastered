@@ -38,19 +38,79 @@ class SyncEngine:
 
         print(f"[SyncEngine] Initialized for Operator: {self.operator_name}, Interval: {self.interval}s")
 
+    def _pull_from_cloud(self, local_db: LocalDatabase):
+        """
+        Fetches the latest prospect data from Oracle and updates the local cache.
+        Uses delta sync based on LAST_UPDATED timestamp.
+        """
+        try:
+            last_sync = local_db.get_last_sync_timestamp()
+            print(f"[SyncEngine] Pulling updates since: {last_sync or 'FOREVER'}")
+            
+            # Fetch only what changed since last sync
+            cloud_prospects = self.db_manager.fetch_prospects_updates(since_timestamp=last_sync)
+            
+            if cloud_prospects:
+                local_db.sync_prospects_from_cloud(cloud_prospects)
+                print(f"[SyncEngine] Synced {len(cloud_prospects)} records from cloud.")
+                
+                # Determine the latest timestamp from the fetched records
+                # Ensure we handle potential None values or different types safely
+                max_ts = None
+                for p in cloud_prospects:
+                    ts = p.get('last_updated')
+                    if ts:
+                        # Convert to string if it's a datetime object
+                        if hasattr(ts, 'isoformat'):
+                            ts_str = ts.isoformat()
+                        else:
+                            ts_str = str(ts)
+                        
+                        if max_ts is None or ts_str > max_ts:
+                            max_ts = ts_str
+                
+                if max_ts:
+                    print(f"[SyncEngine] Updating last_sync timestamp to: {max_ts}")
+                    local_db.set_last_sync_timestamp(max_ts)
+                else:
+                    # Fallback if for some reason we got records but no timestamps (unlikely)
+                    from datetime import timezone
+                    now = datetime.now(timezone.utc).isoformat()
+                    local_db.set_last_sync_timestamp(now)
+
+            else:
+                print("[SyncEngine] No new updates from cloud.")
+                # If no updates, we don't strictly need to update the timestamp, 
+                # but we can to advance the "checked at" window if we trust local clock.
+                # However, to be safe against clock skew, it's better to ONLY update 
+                # when we see data from the DB, or if last_sync was None (initial).
+                if last_sync is None:
+                     from datetime import timezone
+                     now = datetime.now(timezone.utc).isoformat()
+                     local_db.set_last_sync_timestamp(now)
+
+        except Exception as e:
+            print(f"[SyncEngine] Error during Cloud->Local sync: {e}")
+            traceback.print_exc()
+
     def sync_cycle(self):
         """
         Execute a single sync cycle using efficient bulk operations.
-        1. Get all unsynced logs from local SQLite.
-        2. Extract unique actors and prospects from the logs.
-        3. Bulk ensure all unique actors exist in Oracle.
-        4. Bulk upsert all unique prospects in Oracle.
-        5. Bulk insert all outreach logs into Oracle.
-        6. Mark local logs as synced.
+        1. PULL: Update local cache from Oracle.
+        2. Get all unsynced logs from local SQLite.
+        3. Extract unique actors and prospects from the logs.
+        4. Bulk ensure all unique actors exist in Oracle.
+        5. Bulk upsert all unique prospects in Oracle.
+        6. Bulk insert all outreach logs into Oracle.
+        7. Mark local logs as synced.
         """
         local_db = None
         try:
             local_db = LocalDatabase()
+            
+            # --- Step 1: Pull from Cloud ---
+            self._pull_from_cloud(local_db)
+
             unsynced_logs = local_db.get_unsynced_logs()
 
             if not unsynced_logs:
