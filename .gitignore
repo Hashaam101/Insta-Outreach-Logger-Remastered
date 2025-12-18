@@ -65,3 +65,7 @@ assets/wallet/*
 
 # Old project versions
 /insta-outreach-logger-old/
+
+# AI Model Files
+.claude/
+.gemini/
