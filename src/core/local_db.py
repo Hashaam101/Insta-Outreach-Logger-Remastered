@@ -140,17 +140,27 @@ class LocalDatabase:
             return
 
         print(f"[LocalDB] Syncing {len(cloud_prospects)} prospects from cloud...")
-        now = datetime.now(timezone.utc).isoformat()
+        fallback_now = datetime.now(timezone.utc).isoformat()
         
         # Prepare data for executemany
         data_to_insert = []
         for p in cloud_prospects:
+            # Use the cloud's last_updated if available (converted to ISO string if needed)
+            ts = p.get('last_updated')
+            if ts:
+                if hasattr(ts, 'isoformat'):
+                    ts_str = ts.isoformat()
+                else:
+                    ts_str = str(ts)
+            else:
+                ts_str = fallback_now
+
             data_to_insert.append((
                 p['target_username'],
                 p['status'],
                 p.get('owner_actor'), # Use .get() in case key is missing
                 p.get('notes'),
-                now
+                ts_str
             ))
 
         # Bulk upsert (replace)
@@ -275,24 +285,32 @@ class LocalDatabase:
         row = self.cursor.fetchone()
         return dict(row) if row else None
 
-    def update_prospect_status(self, target_username: str, status: str) -> bool:
+    def update_prospect_status(self, target_username: str, status: str, notes: str = None) -> bool:
         """
-        Update a prospect's CRM status.
+        Update a prospect's CRM status and optionally their notes.
 
         Args:
             target_username: The Instagram handle to update.
             status: New status (e.g., 'Replied', 'Booked', 'Not_Interested').
+            notes: Optional text notes to append or replace.
 
         Returns:
             True if a row was updated, False otherwise.
         """
         now = datetime.now(timezone.utc).isoformat()
 
-        self.cursor.execute("""
-            UPDATE prospects
-            SET status = ?, last_updated = ?
-            WHERE target_username = ?
-        """, (status, now, target_username))
+        if notes is not None:
+            self.cursor.execute("""
+                UPDATE prospects
+                SET status = ?, notes = ?, last_updated = ?
+                WHERE target_username = ?
+            """, (status, notes, now, target_username))
+        else:
+            self.cursor.execute("""
+                UPDATE prospects
+                SET status = ?, last_updated = ?
+                WHERE target_username = ?
+            """, (status, now, target_username))
 
         self.conn.commit()
         return self.cursor.rowcount > 0

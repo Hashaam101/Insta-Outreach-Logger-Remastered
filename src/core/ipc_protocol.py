@@ -16,8 +16,15 @@ AI Agent Note: This is Phase 3 - The Brain (IPC Protocol)
 import struct
 import json
 import socket
+from datetime import datetime
 from typing import Optional, Any
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 # =============================================================================
 # Protocol Constants
@@ -83,8 +90,8 @@ def send_msg(sock: socket.socket, msg: dict) -> bool:
         ConnectionError: If the socket is disconnected.
     """
     try:
-        # Serialize message to JSON bytes
-        data = json.dumps(msg).encode("utf-8")
+        # Serialize message to JSON bytes using the DateTimeEncoder
+        data = json.dumps(msg, cls=DateTimeEncoder).encode("utf-8")
 
         # Check message size
         if len(data) > MAX_MESSAGE_SIZE:

@@ -411,26 +411,26 @@ class Launcher:
             import winreg
 
             # 1. Locate bridge.bat and manifest
-            # Check multiple locations (Dev vs Prod/_internal)
-            possible_paths = [
-                os.path.join(PROJECT_ROOT, 'src', 'core', 'bridge.bat'),             # Dev
-                os.path.join(PROJECT_ROOT, '_internal', 'src', 'core', 'bridge.bat') # Prod (PyInstaller)
-            ]
+            # Logic: We are in PROJECT_ROOT. bridge.bat should be in src/core/
+            bridge_path = os.path.join(PROJECT_ROOT, 'src', 'core', 'bridge.bat')
+            
+            # If running frozen (PyInstaller), it might be in _internal
+            if getattr(sys, 'frozen', False):
+                 bridge_path = os.path.join(PROJECT_ROOT, '_internal', 'src', 'core', 'bridge.bat')
+            
+            if not os.path.exists(bridge_path):
+                 # Fallback search
+                 if os.path.exists(os.path.join(PROJECT_ROOT, 'src', 'core', 'bridge.bat')):
+                     bridge_path = os.path.join(PROJECT_ROOT, 'src', 'core', 'bridge.bat')
+                 else:
+                    self.log(f"Could not find bridge.bat at {bridge_path}", "WARNING")
+                    return
 
-            bridge_path = None
-            for p in possible_paths:
-                if os.path.exists(p):
-                    bridge_path = os.path.abspath(p)
-                    break
-
-            if not bridge_path:
-                self.log("Could not find bridge.bat for registration repair.", "WARNING")
-                return
-
+            bridge_path = os.path.abspath(bridge_path)
             manifest_path = os.path.join(os.path.dirname(bridge_path), 'com.instaoutreach.logger.json')
 
             if not os.path.exists(manifest_path):
-                self.log("Manifest json not found. Skipping registration repair.", "WARNING")
+                self.log(f"Manifest json not found at {manifest_path}. Skipping registration repair.", "WARNING")
                 return
 
             # 2. Update Manifest 'path' to current location

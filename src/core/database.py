@@ -186,23 +186,29 @@ class DatabaseManager:
                     print("[OracleDB] Error during log insert:", error.message)
                 connection.commit()
 
-    def get_prospect_status(self, target_username: str) -> str:
+    def get_prospect_status(self, target_username: str):
         """
-        Fetches the status of a single prospect from Oracle.
+        Fetches the details of a single prospect from Oracle.
 
         Args:
             target_username: The Instagram username to look up.
 
         Returns:
-            The prospect's status string if found, None otherwise.
+            Dict: {'target_username', 'status', 'owner_actor', 'notes', 'last_updated'} if found, None otherwise.
         """
-        sql = "SELECT STATUS FROM PROSPECTS WHERE TARGET_USERNAME = :1"
+        sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED FROM PROSPECTS WHERE TARGET_USERNAME = :1"
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql, [target_username])
                 row = cursor.fetchone()
                 if row:
-                    return row[0]
+                    return {
+                        'target_username': row[0],
+                        'status': row[1],
+                        'owner_actor': row[2],
+                        'notes': row[3],
+                        'last_updated': row[4]
+                    }
                 return None
 
     def update_prospect_status(self, username, new_status, notes):

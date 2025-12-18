@@ -35,6 +35,7 @@ local_config.py
 operator_config.json
 user_config.json
 native_manifest.json
+com.instaoutreach.logger.json
 *.env
 .env
 

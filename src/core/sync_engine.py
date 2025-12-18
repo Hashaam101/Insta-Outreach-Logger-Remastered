@@ -22,12 +22,13 @@ class SyncEngine:
     Uploads local logs to Oracle Cloud and performs auto-discovery in bulk.
     """
 
-    def __init__(self, operator_name: str, sync_interval: int = 60):
+    def __init__(self, operator_name: str, sync_interval: int = 60, on_update_callback=None):
         """
         Initialize the Sync Engine.
         Args:
             operator_name: The name of the human operator running this instance.
             sync_interval: Seconds between sync cycles.
+            on_update_callback: Function to call when new data is pulled from cloud.
         """
         self.running = False
         self.interval = sync_interval
@@ -35,6 +36,8 @@ class SyncEngine:
         self._lock = threading.Lock()
         self.operator_name = operator_name
         self.db_manager = DatabaseManager()
+        self.last_sync_memory = None  # In-memory cache of last successful sync time
+        self.on_update_callback = on_update_callback
 
         print(f"[SyncEngine] Initialized for Operator: {self.operator_name}, Interval: {self.interval}s")
 
@@ -54,6 +57,14 @@ class SyncEngine:
                 local_db.sync_prospects_from_cloud(cloud_prospects)
                 print(f"[SyncEngine] Synced {len(cloud_prospects)} records from cloud.")
                 
+                # Notify listeners that local DB has updated data
+                if self.on_update_callback:
+                    print("[SyncEngine] Triggering update callback...")
+                    try:
+                        self.on_update_callback()
+                    except Exception as cb_err:
+                        print(f"[SyncEngine] Callback error: {cb_err}")
+                
                 # Determine the latest timestamp from the fetched records
                 # Ensure we handle potential None values or different types safely
                 max_ts = None
@@ -72,11 +83,13 @@ class SyncEngine:
                 if max_ts:
                     print(f"[SyncEngine] Updating last_sync timestamp to: {max_ts}")
                     local_db.set_last_sync_timestamp(max_ts)
+                    self.last_sync_memory = max_ts
                 else:
                     # Fallback if for some reason we got records but no timestamps (unlikely)
                     from datetime import timezone
                     now = datetime.now(timezone.utc).isoformat()
                     local_db.set_last_sync_timestamp(now)
+                    self.last_sync_memory = now
 
             else:
                 print("[SyncEngine] No new updates from cloud.")
@@ -88,6 +101,7 @@ class SyncEngine:
                      from datetime import timezone
                      now = datetime.now(timezone.utc).isoformat()
                      local_db.set_last_sync_timestamp(now)
+                     self.last_sync_memory = now
 
         except Exception as e:
             print(f"[SyncEngine] Error during Cloud->Local sync: {e}")
@@ -165,16 +179,21 @@ class SyncEngine:
             print(f"[SyncEngine] Error checking prospect in Oracle: {e}")
             return None
 
-    def update_prospect_status_in_oracle(self, target_username: str, new_status: str):
+    def get_last_sync_time_memory(self):
+        """Returns the in-memory cached timestamp of the last successful sync."""
+        return self.last_sync_memory
+
+    def update_prospect_status_in_oracle(self, target_username: str, new_status: str, notes: str = None):
         """
         Update a prospect's status in Oracle.
 
         Args:
             target_username: The Instagram username to update.
             new_status: The new status value.
+            notes: Optional notes to update.
         """
         try:
-            self.db_manager.update_prospect_status(target_username, new_status, notes=None)
+            self.db_manager.update_prospect_status(target_username, new_status, notes=notes)
             print(f"[SyncEngine] Oracle status updated: {target_username} -> {new_status}")
         except Exception as e:
             print(f"[SyncEngine] Error updating prospect status in Oracle: {e}")

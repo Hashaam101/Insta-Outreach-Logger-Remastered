@@ -49,6 +49,13 @@ chrome.runtime.onConnect.addListener((port) => {
                     if (discoveryTabId) {
                         chrome.tabs.remove(discoveryTabId);
                         discoveryTabId = null;
+                    } else {
+                        // Fallback: Find tab by URL if ID is lost (e.g. service worker restart)
+                        chrome.tabs.query({ url: "https://www.instagram.com/?discover_actor=true" }, (tabs) => {
+                            if (tabs && tabs.length > 0) {
+                                chrome.tabs.remove(tabs[0].id);
+                            }
+                        });
                     }
                 });
             }
@@ -57,7 +64,11 @@ chrome.runtime.onConnect.addListener((port) => {
 
         // Store request info for response routing
         if (message.requestId) {
-            pendingRequests.set(message.requestId, { tabId, requestId: message.requestId });
+            let context = {};
+            if (message.type === 'CHECK_PROSPECT_STATUS' && message.payload?.target) {
+                context.target = message.payload.target;
+            }
+            pendingRequests.set(message.requestId, { tabId, requestId: message.requestId, context });
         }
 
         // Forward all other messages to the native host
@@ -94,12 +105,18 @@ function connectNative() {
         nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
 
         nativePort.onMessage.addListener((message) => {
-            console.log('Received message from native host:', message);
+            // console.log('Received message from native host:', message); // Reduced verbosity
 
             // Route response to the correct content script
             if (message.requestId && pendingRequests.has(message.requestId)) {
-                const { tabId, requestId } = pendingRequests.get(message.requestId);
+                const { tabId, requestId, context } = pendingRequests.get(message.requestId);
                 pendingRequests.delete(message.requestId);
+
+                // Log detailed response if we have context
+                if (context && context.target) {
+                     const data = message.data || message;
+                     console.log(`[InstaLogger][UI] Check Response for ${context.target}:`, data);
+                }
 
                 const port = contentPorts.get(tabId);
                 if (port) {
