@@ -39,8 +39,14 @@ from ipc_protocol import (
 # Configuration
 # =============================================================================
 
-# Get the project root directory for logging
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
+# Define PROJECT_ROOT for both frozen (PyInstaller) and dev environments
+if getattr(sys, 'frozen', False):
+    # Running as compiled exe - root is the exe directory
+    PROJECT_ROOT = os.path.dirname(sys.executable)
+else:
+    # Running as script - root is 2 levels up from src/core/
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
+
 LOG_FILE_PATH = os.path.join(PROJECT_ROOT, 'debug_bridge.log')
 
 # Enable/disable debug logging (set False for production)
