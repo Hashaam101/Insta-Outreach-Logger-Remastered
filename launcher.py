@@ -131,25 +131,27 @@ class Launcher:
             print(f"[{level}] {message}")
 
     def check_credentials(self):
-        """Check if required credentials exist (Secure Zip OR Legacy Local Files)."""
-        # 1. Check for Secure Setup Pack
+        """Check if required credentials and identity exist."""
+        # 1. Check for Operator Identity
+        op_config_exists = os.path.exists(os.path.join(PROJECT_ROOT, 'operator_config.json'))
+        if not op_config_exists:
+            self.log("Operator identity not found (operator_config.json missing).")
+            return False
+
+        # 2. Check for Secure Setup Pack
+        has_secure = False
         try:
             from src.core.secrets_manager import SecretsManager
             sm = SecretsManager()
             if sm.zip_path:
-                self.log(f"Secure setup pack found: {sm.zip_path}")
-                return True
-        except Exception as e:
-            self.log(f"Error checking secure credentials: {e}", "WARNING")
+                has_secure = True
+        except Exception: pass
 
-        # 2. Legacy/Dev Check
+        # 3. Legacy/Dev Check
         config_exists = os.path.exists(self.config_path)
         wallet_exists = os.path.exists(self.wallet_path)
 
-        self.log(f"Local Config exists: {config_exists}")
-        self.log(f"Local Wallet exists: {wallet_exists}")
-
-        return config_exists and wallet_exists
+        return op_config_exists and (has_secure or (config_exists and wallet_exists))
 
     def run_setup_wizard(self):
         """Launch the setup wizard for first-time configuration."""
@@ -590,38 +592,20 @@ class Launcher:
     def run(self):
         """
         Main launcher workflow:
-        1. Show Menu (Start vs Reconfigure)
-        2. Check credentials -> Run setup wizard if missing
-        3. Check for updates -> Download and apply if available
-        4. Launch main application
+        1. Check credentials -> If missing, run setup wizard immediately.
+        2. If credentials exist, show optional "Reconfigure" menu.
+        3. Check for updates.
+        4. Launch main application.
         """
         print(f"\n{__app_name__} v{__version__}")
         print("-" * 40)
 
-        # --- Menu Loop ---
-        while True:
-            print("\n[MAIN MENU]")
-            print("1. Reconfigure Setup (Launch Wizard)")
-            print("[ENTER] Start Application")
-            
-            choice = input("\nSelect an option: ").strip()
-            
-            if choice == '1':
-                print("[Launcher] Force starting setup wizard...")
-                self.run_setup_wizard()
-                # After setup, proceed to start application check
-                break
-            elif choice == '':
-                # User pressed Enter, proceed to start
-                break
-            else:
-                print("Invalid option. Please try again.")
-
         # Step 1: Check credentials
         print("\n[Launcher] Step 1: Checking credentials...")
-        if not self.check_credentials():
-            self.log("Credentials not found. Starting setup wizard...")
+        has_creds = self.check_credentials()
 
+        if not has_creds:
+            self.log("First run detected: Credentials not found. Starting setup wizard...")
             if not self.run_setup_wizard():
                 self.log("Setup incomplete. Exiting.", "ERROR")
                 show_warning_message(
@@ -630,19 +614,29 @@ class Launcher:
                     "Please run the setup wizard and provide your Setup_Pack.zip file."
                 )
                 sys.exit(1)
-
             self.log("Setup complete!")
             print("[Launcher] Setup wizard completed successfully")
+        else:
+            # Credentials exist, show optional Reconfigure menu
+            print("[Launcher] Credentials verified")
+            
+            # --- Menu Loop (Only if creds exist) ---
+            print("\n[MAIN MENU]")
+            print("1. Reconfigure Setup (Launch Wizard)")
+            print("[ENTER] Start Application")
+            
+            # Short timeout or just wait for input
+            choice = input("\nSelect an option: ").strip()
+            
+            if choice == '1':
+                print("[Launcher] Launching setup wizard for reconfiguration...")
+                self.run_setup_wizard()
+            # If Enter or anything else, continue to start
 
-        print("[Launcher] Credentials verified")
 
         # Step 1.5: Ensure Native Host is Registered (Self-Repair)
         print("[Launcher] Step 1.5: Verifying Native Host Registration...")
         self.ensure_native_host_registration()
-
-        # Step 1.6: Deploy Extension to Documents
-        print("[Launcher] Step 1.6: Deploying Chrome Extension...")
-        self.deploy_extension()
 
         # Step 2: Check for updates
         print("[Launcher] Step 2: Checking for updates...")

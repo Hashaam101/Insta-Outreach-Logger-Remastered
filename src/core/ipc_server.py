@@ -66,8 +66,8 @@ class IPCServer:
 
     def _load_or_prompt_operator(self):
         """
-        Loads the operator name from config, or prompts for it if not found.
-        This establishes a persistent identity for the human user on this device.
+        Loads the operator name from config.
+        Identity must be established via the Setup Wizard.
         """
         if os.path.exists(OPERATOR_CONFIG_PATH):
             try:
@@ -80,21 +80,8 @@ class IPCServer:
             except (json.JSONDecodeError, IOError) as e:
                 print(f"[Config] Error reading operator_config.json: {e}")
 
-        # If file doesn't exist, is invalid, or name is missing, prompt user.
-        try:
-            name = input(">> Enter Your Operator Name (e.g., 'John Doe'): ")
-            while not name:
-                print("Operator name cannot be empty.")
-                name = input(">> Enter Your Operator Name (e.g., 'John Doe'): ")
-
-            with open(OPERATOR_CONFIG_PATH, 'w') as f:
-                json.dump({'operator_name': name}, f)
-            
-            print(f"[Config] Operator name '{name}' saved.")
-            return name
-        except Exception as e:
-            print(f"Could not save operator config: {e}. Exiting.")
-            exit(1)
+        # If file doesn't exist, is invalid, or name is missing, we cannot continue in CLI mode.
+        raise RuntimeError("Operator identity not established. Please run the Setup Wizard.")
 
     def _register_client(self, client_id, client_socket):
         with self.clients_lock:

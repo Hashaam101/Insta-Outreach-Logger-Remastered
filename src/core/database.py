@@ -16,15 +16,18 @@ sys.path.insert(0, PROJECT_ROOT)
 
 try:
     import local_config as secrets
+    HAS_CONFIG = True
 except ImportError:
-    print("Error: local_config.py not found. Please create it with your database credentials.")
-    sys.exit(1)
+    HAS_CONFIG = False
 
 class DatabaseManager:
     def __init__(self):
         """
         Initializes the DatabaseManager, setting up the connection to the Oracle database.
         """
+        if not HAS_CONFIG:
+            raise ImportError("Database configuration (local_config.py) not found. Please run the setup wizard.")
+
         # Prioritize dynamic secure wallet (from SecretsManager)
         wallet_location = os.environ.get('DB_WALLET_DIR')
         

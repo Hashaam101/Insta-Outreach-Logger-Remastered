@@ -574,7 +574,7 @@ def action_master_build():
 
     # Step 2: Optional version bump
     print(f"\n{Colors.BOLD}Step 2/6: Version bump (optional){Colors.END}")
-    bump = input("Do you want to bump the version? [y/N]: ").strip().lower()
+    bump = input("Do you want to bump the version? [y/N] (default:N): ").strip().lower() or 'n'
     if bump == 'y':
         if not action_bump_version():
             print(f"{Colors.RED}[Aborted] Version bump failed.{Colors.END}")

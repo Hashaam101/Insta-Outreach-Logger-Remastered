@@ -74,6 +74,3 @@ assets/wallet/*
 
 # Database Migrations
 src/core/migrations/
-
-# Tests
-tests/
