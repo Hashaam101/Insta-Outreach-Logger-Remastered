@@ -53,6 +53,7 @@ debug_*.log
 temp.txt
 commitsummary.txt
 test.py
+/tests/
 
 # Oracle Wallet
 #  Ignoring the entire wallet directory.
@@ -73,3 +74,6 @@ assets/wallet/*
 
 # Database Migrations
 src/core/migrations/
+
+# Tests
+tests/
