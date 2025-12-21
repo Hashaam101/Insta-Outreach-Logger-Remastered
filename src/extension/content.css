@@ -48,6 +48,27 @@
     border: 2px solid rgba(255, 255, 255, 0.2);
 }
 
+/* Manual Form Styling */
+.manual-form .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.manual-form input, .manual-form textarea {
+    font-size: 0.85rem !important;
+}
+
+.manual-form input:focus, .manual-form textarea:focus {
+    border-color: #7C3AED !important;
+    outline: none;
+}
+
+/* Ensure banner expands for form */
+.insta-warning-banner:has(#banner-step-manual:not([style*="display: none"])) {
+    max-width: 350px;
+}
+
 /* Modifier class for the blue 'searching' banner */
 .insta-warning-banner--searching {
     background-color: #101828;
@@ -303,30 +324,46 @@
 
 /* --- Minimized State --- */
 .insta-warning-banner.minimized {
-    width: 50px;
-    height: 50px;
-    border-radius: 50%;
-    background-size: 60%;
-    background-position: center;
-    background-repeat: no-repeat;
-    border: 2px solid rgba(255, 255, 255, 0.2);
-    padding: 0;
-    gap: 0;
-    cursor: move;
-    transition: all 0.2s ease-out;
-}
-
-.insta-warning-banner.minimized[data-state="contacted"] {
-    background-color: #480505;
-}
-
-.insta-warning-banner.minimized[data-state="not_contacted"] {
-    background-color: #052712;
+    width: 50px !important;
+    height: 50px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    overflow: hidden !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
 }
 
 .insta-warning-banner.minimized .banner-content,
-.insta-warning-banner.minimized .close-btn {
-    display: none;
+.insta-warning-banner.minimized .close-btn,
+.insta-warning-banner.minimized .searching-text {
+    display: none !important;
+}
+
+/* Ensure icons are visible in minimized state */
+.insta-warning-banner.minimized .searching-icon-container,
+.insta-warning-banner.minimized .contact-icon {
+    display: block !important;
+    margin: 0 !important;
+    width: 30px !important;
+    height: 30px !important;
+}
+
+.insta-warning-banner.minimized .searching-icon-container {
+    background: transparent !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.insta-warning-banner.minimized .searching-icon-container img {
+    width: 30px !important;
+    height: 30px !important;
 }
 
 /* --- Utility Classes --- */

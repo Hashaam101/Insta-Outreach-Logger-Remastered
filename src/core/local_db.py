@@ -55,9 +55,6 @@ class LocalDatabase:
     def init_schema(self):
         """
         Create the local database tables if they don't exist.
-
-        Tables mirror a subset of the Oracle Cloud schema but include
-        local-specific fields like 'synced_to_cloud' for delta sync tracking.
         """
         # Prospects table - local cache of lead status
         self.cursor.execute("""
@@ -66,20 +63,17 @@ class LocalDatabase:
                 status TEXT DEFAULT 'Cold_NoReply',
                 owner_actor TEXT,
                 notes TEXT,
-                last_updated TEXT
+                last_updated TEXT,
+                first_contacted TEXT
             )
         """)
 
         # Migration: Ensure new columns exist for existing databases
-        try:
-            self.cursor.execute("ALTER TABLE prospects ADD COLUMN owner_actor TEXT")
-        except sqlite3.OperationalError:
-            pass # Column already exists
-
-        try:
-            self.cursor.execute("ALTER TABLE prospects ADD COLUMN notes TEXT")
-        except sqlite3.OperationalError:
-            pass # Column already exists
+        for col in ["owner_actor TEXT", "notes TEXT", "first_contacted TEXT"]:
+            try:
+                self.cursor.execute(f"ALTER TABLE prospects ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass # Column already exists
 
         # Outreach logs table - append-only message log with sync tracking
         self.cursor.execute("""
@@ -108,7 +102,52 @@ class LocalDatabase:
             )
         """)
 
+        # Pending deletions table - tracks prospects to be removed from cloud
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pending_deletions (
+                target_username TEXT PRIMARY KEY
+            )
+        """)
+
         self.conn.commit()
+
+    def delete_prospect_local(self, target_username: str):
+        """
+        Deletes a prospect locally and queues it for cloud deletion.
+        """
+        # 1. Remove from local prospects cache
+        self.cursor.execute("DELETE FROM prospects WHERE target_username = ?", (target_username,))
+        # 2. Add to pending deletions
+        self.cursor.execute("INSERT OR IGNORE INTO pending_deletions (target_username) VALUES (?)", (target_username,))
+        self.conn.commit()
+        print(f"[LocalDB] Queued {target_username} for deletion.")
+
+    def get_pending_deletions(self) -> list:
+        """Returns list of usernames to be deleted from cloud."""
+        self.cursor.execute("SELECT target_username FROM pending_deletions")
+        return [row['target_username'] for row in self.cursor.fetchall()]
+
+    def clear_pending_deletions(self, usernames: list):
+        """Removes usernames from the deletion queue after successful sync."""
+        if not usernames: return
+        placeholders = ",".join("?" * len(usernames))
+        self.cursor.execute(f"DELETE FROM pending_deletions WHERE target_username IN ({placeholders})", usernames)
+        self.conn.commit()
+
+    def get_unique_actors(self) -> list:
+        """
+        Returns a sorted list of all unique actor usernames found in local data.
+        Combines actors from the prospects cache and local outreach logs.
+        """
+        sql = """
+            SELECT DISTINCT owner_actor AS username FROM prospects WHERE owner_actor IS NOT NULL
+            UNION
+            SELECT DISTINCT actor_username AS username FROM outreach_logs WHERE actor_username IS NOT NULL
+        """
+        self.cursor.execute(sql)
+        rows = self.cursor.fetchall()
+        actors = sorted([row['username'] for row in rows])
+        return actors
 
     def get_last_sync_timestamp(self) -> str:
         """
@@ -132,9 +171,6 @@ class LocalDatabase:
     def sync_prospects_from_cloud(self, cloud_prospects: list):
         """
         Bulk updates local prospect cache with data from Oracle Cloud.
-        
-        Args:
-            cloud_prospects: List of dicts from Oracle {'target_username', 'status', 'owner_actor', 'notes'}
         """
         if not cloud_prospects:
             return
@@ -142,62 +178,48 @@ class LocalDatabase:
         print(f"[LocalDB] Syncing {len(cloud_prospects)} prospects from cloud...")
         fallback_now = datetime.now(timezone.utc).isoformat()
         
-        # Prepare data for executemany
         data_to_insert = []
         for p in cloud_prospects:
-            # Use the cloud's last_updated if available (converted to ISO string if needed)
             ts = p.get('last_updated')
-            if ts:
-                if hasattr(ts, 'isoformat'):
-                    ts_str = ts.isoformat()
-                else:
-                    ts_str = str(ts)
-            else:
-                ts_str = fallback_now
+            ts_str = ts.isoformat() if hasattr(ts, 'isoformat') else str(ts) if ts else fallback_now
+            
+            fc = p.get('first_contacted')
+            fc_str = fc.isoformat() if hasattr(fc, 'isoformat') else str(fc) if fc else None
 
             data_to_insert.append((
                 p['target_username'],
                 p['status'],
-                p.get('owner_actor'), # Use .get() in case key is missing
+                p.get('owner_actor'),
                 p.get('notes'),
-                ts_str
+                ts_str,
+                fc_str
             ))
 
-        # Bulk upsert (replace)
-        # We use INSERT OR REPLACE (or upsert syntax) to update local state
         sql = """
-            INSERT INTO prospects (target_username, status, owner_actor, notes, last_updated)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO prospects (target_username, status, owner_actor, notes, last_updated, first_contacted)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(target_username) DO UPDATE SET
                 status = excluded.status,
                 owner_actor = excluded.owner_actor,
                 notes = excluded.notes,
-                last_updated = excluded.last_updated
+                last_updated = excluded.last_updated,
+                first_contacted = COALESCE(prospects.first_contacted, excluded.first_contacted)
         """
         
         try:
             self.cursor.executemany(sql, data_to_insert)
             self.conn.commit()
-            print(f"[LocalDB] Cloud sync applied successfully.")
         except Exception as e:
             print(f"[LocalDB] Error applying cloud sync: {e}")
 
     def log_outreach(self, log_data: dict, new_status: str = 'Contacted') -> int:
         """
-        Log a new outreach message from an enriched data dictionary.
-        
-        Args:
-            log_data: A dictionary containing all log info, including
-                      target, actor, operator, and message.
-            new_status: The status to set for the prospect (default 'Contacted').
-        Returns:
-            The ID of the newly inserted log entry.
+        Log a new outreach message and update prospect.
         """
         print(f"[LocalDB] Logging outreach: {log_data}")
-        # Create a timezone-AWARE UTC timestamp
         now = datetime.now(timezone.utc).isoformat()
+        log_ts = log_data.get('timestamp', now)
 
-        # Insert the enriched outreach log
         self.cursor.execute("""
             INSERT INTO outreach_logs (
                 target_username, actor_username, operator_name, 
@@ -209,88 +231,56 @@ class LocalDatabase:
             log_data['actor_username'],
             log_data['operator_name'],
             log_data['message_snippet'],
-            now
+            log_ts
         ))
 
         log_id = self.cursor.lastrowid
 
         # Upsert the prospect record
-        # Use COALESCE or subquery to keep existing status if it's not 'new' or if we are forced to change it
-        # Actually, let's just use the provided new_status but logic in IPC will prevent it if Excluded.
         self.cursor.execute("""
-            INSERT INTO prospects (target_username, status, last_updated)
-            VALUES (?, ?, ?)
+            INSERT INTO prospects (target_username, status, last_updated, first_contacted)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(target_username) DO UPDATE SET
                 status = CASE 
                     WHEN status = 'new' THEN excluded.status 
                     ELSE status 
                 END,
-                last_updated = excluded.last_updated
-        """, (log_data['target_username'], new_status, now))
+                last_updated = excluded.last_updated,
+                first_contacted = COALESCE(prospects.first_contacted, excluded.first_contacted)
+        """, (log_data['target_username'], new_status, log_ts, log_ts))
 
         self.conn.commit()
         return log_id
 
-    def get_unsynced_logs(self) -> list:
-        """
-        Retrieve all outreach logs that haven't been synced to the cloud,
-        including the new actor and operator data.
-        """
-        self.cursor.execute("""
-            SELECT id, target_username, actor_username, operator_name, message_snippet, timestamp
-            FROM outreach_logs
-            WHERE synced_to_cloud = 0
-            ORDER BY timestamp ASC
-        """)
-
-        rows = self.cursor.fetchall()
-        logs = [dict(row) for row in rows]
-        if logs:
-            print(f"[LocalDB] Found {len(logs)} unsynced logs to be processed.")
-        return logs
-
-    def mark_synced(self, log_ids: list) -> int:
-        """
-        Mark the specified log entries as synced to the cloud.
-
-        Args:
-            log_ids: List of log IDs to mark as synced.
-
-        Returns:
-            Number of rows updated.
-        """
-        if not log_ids:
-            return 0
-        
-        print(f"[LocalDB] Marking {len(log_ids)} logs as synced: {log_ids}")
-        placeholders = ",".join("?" * len(log_ids))
-        self.cursor.execute(f"""
-            UPDATE outreach_logs
-            SET synced_to_cloud = 1
-            WHERE id IN ({placeholders})
-        """, log_ids)
-
-        self.conn.commit()
-        return self.cursor.rowcount
-
     def get_prospect(self, target_username: str) -> dict:
         """
         Retrieve a single prospect's local record.
-
-        Args:
-            target_username: The Instagram handle to look up.
-
-        Returns:
-            Dict with prospect data, or None if not found.
         """
         self.cursor.execute("""
-            SELECT target_username, status, owner_actor, notes, last_updated
+            SELECT target_username, status, owner_actor, notes, last_updated, first_contacted
             FROM prospects
             WHERE target_username = ?
         """, (target_username,))
 
         row = self.cursor.fetchone()
         return dict(row) if row else None
+
+    def get_prospects_batch(self, usernames: list) -> dict:
+        """
+        Retrieve multiple prospects' local records.
+        """
+        if not usernames:
+            return {}
+            
+        placeholders = ",".join("?" * len(usernames))
+        self.cursor.execute(f"""
+            SELECT target_username, status, owner_actor, notes, last_updated, first_contacted
+            FROM prospects
+            WHERE target_username IN ({placeholders})
+        """, usernames)
+        
+        rows = self.cursor.fetchall()
+        return {row['target_username']: dict(row) for row in rows}
 
     def update_prospect_status(self, target_username: str, status: str, notes: str = None) -> bool:
         """

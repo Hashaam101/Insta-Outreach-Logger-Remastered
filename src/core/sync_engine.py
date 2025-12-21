@@ -125,6 +125,17 @@ class SyncEngine:
             # --- Step 1: Pull from Cloud ---
             self._pull_from_cloud(local_db)
 
+            # --- Step 1.5: Process Deletions ---
+            pending_deletions = local_db.get_pending_deletions()
+            if pending_deletions:
+                print(f"[SyncEngine] Processing {len(pending_deletions)} pending deletions...")
+                for username in pending_deletions:
+                    try:
+                        self.db_manager.delete_prospect(username)
+                    except Exception as e:
+                        print(f"[SyncEngine] Error deleting {username} from cloud: {e}")
+                local_db.clear_pending_deletions(pending_deletions)
+
             unsynced_logs = local_db.get_unsynced_logs()
 
             if not unsynced_logs:
@@ -143,7 +154,20 @@ class SyncEngine:
             
             # --- Step 4: Bulk upsert prospects ---
             # Format data for executemany, which expects a list of tuples/dicts
-            prospects_to_upsert = [{'target_username': p[0], 'owner_actor': p[1]} for p in unique_prospects]
+            # Enrich with current status from local DB
+            usernames = list({p[0] for p in unique_prospects})
+            local_prospects = local_db.get_prospects_batch(usernames)
+            
+            prospects_to_upsert = []
+            for target, actor in unique_prospects:
+                p_data = local_prospects.get(target, {})
+                prospects_to_upsert.append({
+                    'target_username': target,
+                    'owner_actor': actor,
+                    'status': p_data.get('status', 'new'),
+                    'first_contacted': p_data.get('first_contacted')
+                })
+
             if prospects_to_upsert:
                 self.db_manager.upsert_prospects(prospects_to_upsert)
 

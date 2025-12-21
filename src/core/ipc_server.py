@@ -183,6 +183,10 @@ class IPCServer:
             response = self._handle_check_prospect_status(msg, client_id)
         elif msg_type == "UPDATE_PROSPECT_STATUS":
             response = self._handle_update_prospect_status(msg, client_id)
+        elif msg_type == "DELETE_PROSPECT":
+            response = self._handle_delete_prospect(msg, client_id)
+        elif msg_type == "GET_ALL_ACTORS":
+            response = self._handle_get_all_actors(msg, client_id)
         elif msg_type == "PING":
             response = {"status": "ok", "type": "PONG"}
         else:
@@ -203,31 +207,41 @@ class IPCServer:
             target = payload.get("target")
             actor = payload.get("actor") # Actor is now sent from the extension
             message = payload.get("message", "")
+            custom_ts = payload.get("timestamp") # Optional custom timestamp for manual logs
 
             if not target or not actor:
                 return create_error_response("Missing 'target' or 'actor' in LOG_OUTREACH")
 
-            # Check if prospect is excluded
-            with self._lock:
-                local_prospect = self.db.get_prospect(target)
-            
-            if local_prospect and local_prospect.get('status') == 'Excluded':
-                print(f"[IPC] Skipping log for EXCLUDED prospect: {target}")
-                return create_ack_response(False, {"message": "Prospect is excluded from logging", "is_excluded": True})
+            # Check if prospect is excluded (ignore if this is a manual override log)
+            if not custom_ts:
+                with self._lock:
+                    local_prospect = self.db.get_prospect(target)
+                
+                if local_prospect and local_prospect.get('status') == 'Excluded':
+                    print(f"[IPC] Skipping log for EXCLUDED prospect: {target}")
+                    return create_ack_response(False, {"message": "Prospect is excluded from logging", "is_excluded": True})
 
             # Enrich the log with the Operator's identity
             enriched_log = {
                 "target_username": target,
                 "actor_username": actor,
                 "message_snippet": message,
-                "operator_name": self.operator_name # Inject the Operator
+                "operator_name": self.operator_name, # Inject the Operator
+                "timestamp": custom_ts if custom_ts else datetime.now(timezone.utc).isoformat()
             }
+
+            # If manual log, format the snippet as requested
+            if custom_ts:
+                # We need to know the old status. For simplicity, we assume 'Not Contacted' if it's a manual contact log
+                # but we can try to be more precise if we had the status in payload.
+                # For now, let's use the format suggested.
+                enriched_log["message_snippet"] = f"[Manual Change: Not Contacted -> Contacted] {message}"
 
             # Thread-safe write to the local database queue
             with self._lock:
                 log_id = self.db.log_outreach(enriched_log)
 
-            print(f"[IPC] Queued outreach from Operator '{self.operator_name}' via Actor '{actor}': to {target}")
+            print(f"[IPC] Queued outreach from Operator '{self.operator_name}' via Actor '{actor}': to {target} (Manual: {bool(custom_ts)})")
             return create_ack_response(True, {"log_id": log_id})
 
         except Exception as e:
@@ -235,10 +249,32 @@ class IPCServer:
             traceback.print_exc()
             return create_error_response(f"Database error: {e}")
 
+    def _handle_delete_prospect(self, msg: dict, client_id: str) -> dict:
+        """Removes prospect locally and queues for cloud removal."""
+        try:
+            payload = msg.get("payload", msg)
+            target = payload.get("target")
+            if not target: return create_error_response("Missing target")
+            
+            with self._lock:
+                self.db.delete_prospect_local(target)
+            return create_ack_response(True, {"success": True})
+        except Exception as e:
+            return create_error_response(str(e))
+
+    def _handle_get_all_actors(self, msg: dict, client_id: str) -> dict:
+        """Returns list of all unique actors from local DB cache."""
+        try:
+            with self._lock:
+                actors = self.db.get_unique_actors()
+            return create_ack_response(True, {"actors": actors})
+        except Exception as e:
+            return create_error_response(str(e))
+
     def _handle_check_prospect_status(self, msg: dict, client_id: str) -> dict:
         """
-        Handle CHECK_PROSPECT_STATUS message. Checks local DB first, then Oracle.
-        Returns the prospect's status if they've been contacted before.
+        Handle CHECK_PROSPECT_STATUS message. Checks local DB ONLY.
+        Background sync thread ensures local DB is up to date with Oracle.
         """
         try:
             payload = msg.get("payload", msg)
@@ -247,149 +283,60 @@ class IPCServer:
             if not target:
                 return create_error_response("Missing 'target' in CHECK_PROSPECT_STATUS")
 
-            print(f"[IPC] Checking prospect status for: {target}")
+            print(f"[IPC] Checking local prospect status for: {target}")
 
-            # First check local SQLite database
+            # Query local SQLite database
             with self._lock:
                 local_prospect = self.db.get_prospect(target)
 
             if local_prospect:
-                # Self-Healing: If local record is missing owner_actor, try to fetch from Oracle
-                # Only do this if we haven't checked recently (simple negative cache check for this specific flow?)
-                # For now, we just check.
-                should_check_oracle = False
-                if not local_prospect.get("owner_actor"):
-                     print(f"[IPC] Local HIT for {target} but missing owner_actor. Attempting self-heal via Oracle...")
-                     should_check_oracle = True
-                
-                if not should_check_oracle:
-                    print(f"[IPC] Local HIT for {target}: {local_prospect.get('status')}")
-                    return create_ack_response(True, {
-                        "contacted": True,
-                        "status": local_prospect.get("status", "Cold_NoReply"),
-                        "owner_actor": local_prospect.get("owner_actor"),
-                        "last_updated": local_prospect.get("last_updated"),
-                        "notes": local_prospect.get("notes"),
-                        "source": "local"
-                    })
-
-            # Check Negative Cache (Optimization)
-            # ... (rest of logic)
-
-            # Check Negative Cache (Optimization)
-            last_check_ts = self.oracle_check_cache.get(target)
-            last_sync_ts = self.sync_engine.get_last_sync_time_memory()
-
-            if last_check_ts and last_sync_ts:
-                # If we checked Oracle AFTER the last sync occurred, the result hasn't changed.
-                if last_check_ts > last_sync_ts:
-                    print(f"[IPC] Optimization: Skipping Oracle check for {target} (Checked at {last_check_ts} > Synced at {last_sync_ts})")
-                    return create_ack_response(True, {
-                        "contacted": False,
-                        "source": "negative_cache"
-                    })
-
-            # If not found locally, check Oracle database via sync engine
-            try:
-                # Store the time of this check (BEFORE the call, to be safe/conservative)
-                check_time = datetime.now(timezone.utc).isoformat()
-                
-                oracle_data = self.sync_engine.check_prospect_in_oracle(target)
-                
-                # Update Negative Cache regardless of result (we checked!)
-                self.oracle_check_cache[target] = check_time
-
-                if oracle_data and isinstance(oracle_data, dict):
-                    # Expecting dict from new SyncEngine/DatabaseManager if found
-                    status = oracle_data.get('status')
-                    # Update local cache so next time it's a Local HIT
-                    with self._lock:
-                        # We construct a prospect dict to pass to sync_prospects_from_cloud
-                        # Note: sync_prospects_from_cloud expects a list
-                         self.db.sync_prospects_from_cloud([oracle_data])
-
-                    print(f"[IPC] Oracle HIT for {target}: {status}")
-                    return create_ack_response(True, {
-                        "contacted": True,
-                        "status": status,
-                        "owner_actor": oracle_data.get("owner_actor"),
-                        "last_updated": oracle_data.get("last_updated"),
-                        "notes": oracle_data.get("notes"),
-                        "source": "oracle"
-                    })
-                elif oracle_data and isinstance(oracle_data, str):
-                    # Backward compatibility if it returns just a status string
-                    print(f"[IPC] Oracle HIT for {target}: {oracle_data} (Legacy String)")
-                     # We can't easily sync to local DB without full object, so just return it
-                    return create_ack_response(True, {
-                        "contacted": True,
-                        "status": oracle_data,
-                        "source": "oracle_legacy"
-                    })
-
-            except Exception as e:
-                print(f"[IPC] Oracle check failed for {target}: {e}")
-                # Continue even if Oracle check fails - just return not found
-
-            # CRITICAL FALLBACK: If we had a local prospect but forced an Oracle check (self-healing)
-            # and it FAILED (or wasn't found in Oracle), we MUST return the local data.
-            # Otherwise, we tell the user "Not Contacted" when they ARE contacted locally.
-            if 'local_prospect' in locals() and local_prospect:
-                print(f"[IPC] Self-healing failed (Oracle miss/error). Returning degraded local data for {target}.")
+                print(f"[IPC] Local HIT for {target}: {local_prospect.get('status')}")
                 return create_ack_response(True, {
                     "contacted": True,
                     "status": local_prospect.get("status", "Cold_NoReply"),
-                    "owner_actor": local_prospect.get("owner_actor"), # Will be None/Unknown
-                    "last_updated": local_prospect.get("last_updated"), # Should be present
+                    "owner_actor": local_prospect.get("owner_actor"),
+                    "last_updated": local_prospect.get("last_updated"),
                     "notes": local_prospect.get("notes"),
-                    "source": "local_degraded"
+                    "source": "local"
                 })
 
-            print(f"[IPC] MISS for {target} - not contacted before")
+            print(f"[IPC] Local MISS for {target} - assuming not contacted")
             return create_ack_response(True, {
                 "contacted": False,
-                "source": "none"
+                "source": "local_miss"
             })
 
         except Exception as e:
-            print(f"[IPC] Error checking prospect status: {e}")
-            traceback.print_exc()
-            return create_error_response(f"Error checking status: {e}")
+            print(f"[IPC] Error checking local prospect status: {e}")
+            return create_error_response(f"Local DB error: {e}")
 
     def _handle_update_prospect_status(self, msg: dict, client_id: str) -> dict:
         """
         Handle UPDATE_PROSPECT_STATUS message. Updates the prospect's status
-        in both local DB and Oracle, and logs the status change event.
+        in local DB and logs the event. SyncEngine will push to Oracle in the next cycle.
         """
         try:
             payload = msg.get("payload", msg)
             target = payload.get("target")
             new_status = payload.get("new_status")
             actor = payload.get("actor", "unknown_actor")
-            notes = payload.get("notes") # Extract notes
+            notes = payload.get("notes")
 
             if not target or not new_status:
                 return create_error_response("Missing 'target' or 'new_status' in UPDATE_PROSPECT_STATUS")
 
-            # Get the old status before updating
+            # Get the old status for logging
             with self._lock:
                 old_prospect = self.db.get_prospect(target)
             old_status = old_prospect.get("status", "New") if old_prospect else "New"
 
-            print(f"[IPC] Updating prospect status: {target} ({old_status} -> {new_status}) Notes: {'Yes' if notes else 'No'}")
+            print(f"[IPC] Updating local status: {target} ({old_status} -> {new_status})")
 
-            # Update local SQLite database
+            # 1. Update local SQLite database
             with self._lock:
-                # Pass notes to local DB
-                updated = self.db.update_prospect_status(target, new_status, notes=notes)
+                self.db.update_prospect_status(target, new_status, notes=notes)
 
-            if updated:
-                print(f"[IPC] Local status updated for {target}: {new_status}")
-            else:
-                # If prospect doesn't exist locally, insert it
-                print(f"[IPC] Prospect {target} not in local DB, will be synced via next outreach")
-
-            # Log the status change event to outreach_logs (showing transition)
+            # 2. Log the status change event (This triggers SyncEngine to push the new state to Oracle)
             status_change_log = {
                 "target_username": target,
                 "actor_username": actor,
@@ -397,24 +344,14 @@ class IPCServer:
                 "operator_name": self.operator_name
             }
             with self._lock:
-                log_id = self.db.log_outreach(status_change_log)
-            print(f"[IPC] Status change logged (ID: {log_id}) for {target}: {old_status} -> {new_status}")
+                self.db.log_outreach(status_change_log)
 
-            # Trigger sync engine to push update to Oracle
-            try:
-                # Pass notes to Sync Engine
-                self.sync_engine.update_prospect_status_in_oracle(target, new_status, notes=notes)
-                print(f"[IPC] Oracle status update queued for {target}")
-            except Exception as e:
-                print(f"[IPC] Oracle update failed for {target}: {e}")
-                # Continue even if Oracle fails - local update is still valid
-
+            print(f"[IPC] Local update complete. Change queued for cloud sync.")
             return create_ack_response(True, {"success": True})
 
         except Exception as e:
-            print(f"[IPC] Error updating prospect status: {e}")
-            traceback.print_exc()
-            return create_error_response(f"Error updating status: {e}")
+            print(f"[IPC] Error during local status update: {e}")
+            return create_error_response(f"Local update failed: {e}")
 
     def start(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -95,21 +95,25 @@ chrome.runtime.onConnect.addListener((port) => {
             pendingRequests.set(message.requestId, { tabId, requestId: message.requestId, context });
         }
 
-        // Forward all other messages to the native host
+// Forward all other messages to the native host
         if (nativePort) {
             console.log('Forwarding message to native host:', message.type);
             nativePort.postMessage(message);
         } else {
-            console.error('Cannot forward message: Native host not connected.');
-            // Send error response back to content script
-            if (message.requestId && tabId) {
+            // Attempt to connect
+            connectNative();
+            
+            // If still not connected after attempt, return a friendly error
+            if (!nativePort && message.requestId && tabId) {
                 port.postMessage({
                     requestId: message.requestId,
                     error: true,
-                    message: 'Native host not connected'
+                    message: 'APPLICATION_OFFLINE',
+                    friendlyMessage: 'Application not running. Please ensure the Insta Outreach Logger app is open on your computer.'
                 });
+            } else if (nativePort) {
+                nativePort.postMessage(message);
             }
-            connectNative();
         }
     });
 
@@ -124,19 +128,19 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // --- Connection to Native Host ---
 function connectNative() {
-    console.log(`Connecting to native host: ${NATIVE_HOST_NAME}`);
+    // If already connected, do nothing
+    if (nativePort) return;
+
+    console.log(`Attempting to connect to native host: ${NATIVE_HOST_NAME}`);
     try {
         nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
 
         nativePort.onMessage.addListener((message) => {
-            // console.log('Received message from native host:', message); // Reduced verbosity
-
             // Route response to the correct content script
             if (message.requestId && pendingRequests.has(message.requestId)) {
                 const { tabId, requestId, context } = pendingRequests.get(message.requestId);
                 pendingRequests.delete(message.requestId);
 
-                // Log detailed response if we have context
                 if (context && context.target) {
                      const data = message.data || message;
                      console.log(`[InstaLogger][UI] Check Response for ${context.target}:`, data);
@@ -147,13 +151,8 @@ function connectNative() {
                     port.postMessage(message);
                 }
             } else {
-                // Broadcast to all connected content scripts if no specific target
                 contentPorts.forEach((port) => {
-                    try {
-                        port.postMessage(message);
-                    } catch (e) {
-                        // Port may have disconnected
-                    }
+                    try { port.postMessage(message); } catch (e) {}
                 });
             }
         });
@@ -161,14 +160,20 @@ function connectNative() {
         nativePort.onDisconnect.addListener(() => {
             const error = chrome.runtime.lastError;
             if (error) {
-                console.error('Native host disconnected with error:', error.message);
+                // Check if this is a "Host not found" error which usually means setup isn't done
+                if (error.message.includes("host not found")) {
+                    console.log('[InstaLogger] Native host not registered yet. This is normal during first-time setup.');
+                } else {
+                    console.warn('[InstaLogger] Native host disconnected:', error.message);
+                }
             } else {
-                console.log('Native host disconnected.');
+                console.log('[InstaLogger] Native host connection closed.');
             }
             nativePort = null;
         });
     } catch (e) {
-        console.error('Failed to connect to native host:', e);
+        // This catch block handles immediate failures in connectNative
+        console.log('[InstaLogger] Connection attempt failed (app likely closed).');
         nativePort = null;
     }
 }

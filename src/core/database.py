@@ -68,8 +68,10 @@ class DatabaseManager:
                 cursor.execute(sql)
                 rows = cursor.fetchall()
                 print("DEBUG: Rows fetched, converting to DataFrame...")
-                columns = [desc[0] for desc in cursor.description]
-                return pd.DataFrame.from_records(rows, columns=columns)
+                if cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    return pd.DataFrame.from_records(rows, columns=columns)
+                return pd.DataFrame()
 
     def get_analytics_data(self):
         """
@@ -80,8 +82,10 @@ class DatabaseManager:
             with connection.cursor() as cursor:
                 cursor.execute(sql)
                 rows = cursor.fetchall()
-                columns = [desc[0] for desc in cursor.description]
-                return pd.DataFrame.from_records(rows, columns=columns)
+                if cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    return pd.DataFrame.from_records(rows, columns=columns)
+                return pd.DataFrame()
 
     def get_full_activity_log(self):
         """
@@ -105,11 +109,13 @@ class DatabaseManager:
             with connection.cursor() as cursor:
                 cursor.execute(sql)
                 rows = cursor.fetchall()
-                columns = [desc[0] for desc in cursor.description]
-                df = pd.DataFrame.from_records(rows, columns=columns)
-                if not df.empty:
-                    df['CREATED_AT'] = pd.to_datetime(df['CREATED_AT'])
-                return df
+                if cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    df = pd.DataFrame.from_records(rows, columns=columns)
+                    if not df.empty:
+                        df['CREATED_AT'] = pd.to_datetime(df['CREATED_AT'])
+                    return df
+                return pd.DataFrame()
 
     def ensure_actor_exists(self, actor_username, operator_name):
         """
@@ -141,22 +147,28 @@ class DatabaseManager:
 
     def upsert_prospects(self, prospects: list):
         """
-        Inserts or updates prospect records in the database.
-        
+        Bulk ensures prospects exist in the PROSPECTS table.
         Args:
-            prospects: A list of tuples, where each tuple is (target_username, owner_actor).
+            prospects: List of dicts with 'target_username', 'owner_actor', 'status', and 'first_contacted'.
         """
         print(f"[OracleDB] Upserting {len(prospects)} prospects...")
         sql = """
             MERGE INTO PROSPECTS p
-            USING (SELECT :target_username AS TARGET_USERNAME, :owner_actor AS OWNER_ACTOR FROM dual) new
+            USING (SELECT :target_username AS TARGET_USERNAME, :owner_actor AS OWNER_ACTOR, :status AS STATUS, :first_contacted AS FIRST_CONTACTED FROM dual) new
             ON (p.TARGET_USERNAME = new.TARGET_USERNAME)
             WHEN MATCHED THEN
-                UPDATE SET LAST_UPDATED = CURRENT_TIMESTAMP
+                UPDATE SET STATUS = new.STATUS, LAST_UPDATED = CURRENT_TIMESTAMP,
+                           FIRST_CONTACTED = COALESCE(p.FIRST_CONTACTED, new.FIRST_CONTACTED)
             WHEN NOT MATCHED THEN
-                INSERT (TARGET_USERNAME, OWNER_ACTOR, STATUS, LAST_UPDATED)
-                VALUES (new.TARGET_USERNAME, new.OWNER_ACTOR, 'new', CURRENT_TIMESTAMP)
+                INSERT (TARGET_USERNAME, OWNER_ACTOR, STATUS, LAST_UPDATED, FIRST_CONTACTED)
+                VALUES (new.TARGET_USERNAME, new.OWNER_ACTOR, new.STATUS, CURRENT_TIMESTAMP, new.FIRST_CONTACTED)
         """
+        # Convert string timestamps to datetime if present
+        for p in prospects:
+            if p.get('first_contacted') and isinstance(p['first_contacted'], str):
+                try: p['first_contacted'] = pd.to_datetime(p['first_contacted'])
+                except: pass
+
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.executemany(sql, prospects, batcherrors=True)
@@ -254,6 +266,24 @@ class DatabaseManager:
                 cursor.execute(sql, params)
                 connection.commit()
 
+    def delete_prospect(self, username: str):
+        """Deletes a prospect from the Oracle database."""
+        sql = "DELETE FROM PROSPECTS WHERE TARGET_USERNAME = :1"
+        with self.get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, [username])
+                connection.commit()
+        print(f"[OracleDB] Deleted prospect: {username}")
+
+    def get_all_actors(self) -> list:
+        """Returns a list of all unique actor usernames."""
+        sql = "SELECT USERNAME FROM ACTORS ORDER BY USERNAME ASC"
+        with self.get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+                return [row[0] for row in rows]
+
     def fetch_prospects_updates(self, since_timestamp=None):
         """
         Fetches prospect statuses updated after the given timestamp.
@@ -262,10 +292,10 @@ class DatabaseManager:
             since_timestamp: ISO format string or datetime object.
             
         Returns:
-            List of dicts: {'target_username', 'status', 'owner_actor', 'notes', 'last_updated'}
+            List of dicts: {'target_username', 'status', 'owner_actor', 'notes', 'last_updated', 'first_contacted'}
         """
         if since_timestamp:
-            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED FROM PROSPECTS WHERE LAST_UPDATED > :1"
+            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED, FIRST_CONTACTED FROM PROSPECTS WHERE LAST_UPDATED > :1"
             # Ensure timestamp is in a format Oracle likes (datetime object)
             if isinstance(since_timestamp, str):
                 try:
@@ -274,7 +304,7 @@ class DatabaseManager:
                     pass
             params = [since_timestamp]
         else:
-            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED FROM PROSPECTS"
+            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED, FIRST_CONTACTED FROM PROSPECTS"
             params = []
 
         with self.get_connection() as connection:
@@ -288,7 +318,8 @@ class DatabaseManager:
                         'status': row[1],
                         'owner_actor': row[2],
                         'notes': row[3],
-                        'last_updated': row[4]
+                        'last_updated': row[4],
+                        'first_contacted': row[5]
                     }
                     for row in rows
                 ]
