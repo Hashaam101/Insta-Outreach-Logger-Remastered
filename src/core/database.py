@@ -221,14 +221,33 @@ class DatabaseManager:
 
     def update_prospect_status(self, username, new_status, notes):
         """
-        Updates the status and notes for a given prospect.
+        Updates (or inserts) the status and notes for a given prospect in Oracle.
+        Uses MERGE to handle prospects that might not exist in the DB yet.
         """
         if notes is not None:
-            sql = "UPDATE PROSPECTS SET STATUS = :1, NOTES = :2, LAST_UPDATED = CURRENT_TIMESTAMP WHERE TARGET_USERNAME = :3"
-            params = [new_status, notes, username]
+            sql = """
+                MERGE INTO PROSPECTS p
+                USING (SELECT :1 AS TARGET_USERNAME, :2 AS STATUS, :3 AS NOTES FROM dual) new
+                ON (p.TARGET_USERNAME = new.TARGET_USERNAME)
+                WHEN MATCHED THEN
+                    UPDATE SET STATUS = new.STATUS, NOTES = new.NOTES, LAST_UPDATED = CURRENT_TIMESTAMP
+                WHEN NOT MATCHED THEN
+                    INSERT (TARGET_USERNAME, STATUS, NOTES, LAST_UPDATED)
+                    VALUES (new.TARGET_USERNAME, new.STATUS, new.NOTES, CURRENT_TIMESTAMP)
+            """
+            params = [username, new_status, notes]
         else:
-            sql = "UPDATE PROSPECTS SET STATUS = :1, LAST_UPDATED = CURRENT_TIMESTAMP WHERE TARGET_USERNAME = :2"
-            params = [new_status, username]
+            sql = """
+                MERGE INTO PROSPECTS p
+                USING (SELECT :1 AS TARGET_USERNAME, :2 AS STATUS FROM dual) new
+                ON (p.TARGET_USERNAME = new.TARGET_USERNAME)
+                WHEN MATCHED THEN
+                    UPDATE SET STATUS = new.STATUS, LAST_UPDATED = CURRENT_TIMESTAMP
+                WHEN NOT MATCHED THEN
+                    INSERT (TARGET_USERNAME, STATUS, LAST_UPDATED)
+                    VALUES (new.TARGET_USERNAME, new.STATUS, CURRENT_TIMESTAMP)
+            """
+            params = [username, new_status]
 
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
