@@ -23,6 +23,7 @@ import subprocess
 import argparse
 import traceback
 import datetime
+import time
 
 # --- Crash Log Setup ---
 # Log crashes to a file for debugging compiled exe issues
@@ -472,11 +473,28 @@ class Launcher:
         except Exception as e:
             self.log(f"Registration repair failed: {e}", "ERROR")
 
+    def _is_chrome_running(self):
+        """Check if any chrome.exe processes are running."""
+        try:
+            # Use tasklist to check for chrome.exe
+            output = subprocess.check_output('tasklist /FI "IMAGENAME eq chrome.exe"', shell=True).decode()
+            return "chrome.exe" in output.lower()
+        except Exception:
+            return False
+
+    def _kill_chrome(self):
+        """Forcefully terminate all chrome.exe processes."""
+        try:
+            subprocess.run('taskkill /F /IM chrome.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except Exception:
+            return False
+
     def deploy_extension(self):
         """
-        Copy the Chrome Extension to the user's Documents folder.
-        This makes it easy for the user to load it into Chrome.
+        Move the Chrome Extension to the user's Documents folder.
         Target: Documents/Insta Logger Remastered/extension
+        Behavior: Always overwrite if source exists. Warn if Chrome is open.
         """
         try:
             # 1. Determine Source Path
@@ -500,26 +518,70 @@ class Launcher:
                     source_path = possible_path
 
             if source_path is None:
-                self.log("Could not locate extension source folder. Skipping deployment.", "WARNING")
+                # This is normal if we've already moved it in a previous run
+                # self.log("Extension source not found (likely already deployed).")
                 return
 
             # 2. Determine Destination Path
             docs_dir = os.path.join(os.path.expanduser("~"), "Documents")
             target_dir = os.path.join(docs_dir, "Insta Logger Remastered", "extension")
 
-            self.log(f"Deploying extension from {source_path} to {target_dir}")
+            self.log(f"Preparing to deploy extension to {target_dir}...")
 
-            # 3. Copy Files
-            # Remove existing target to ensure clean state (updates, deleted files)
-            if os.path.exists(target_dir):
-                shutil.rmtree(target_dir)
+            # 3. Check for Chrome Conflict
+            while self._is_chrome_running():
+                print("\n[WARNING] Google Chrome is currently running.")
+                print("The extension cannot be updated while Chrome is open.")
+                print("1. Retry (I have closed Chrome)")
+                print("2. Force Close Chrome")
+                print("3. Skip Extension Update")
+                
+                choice = input("Select option [1-3]: ").strip()
+                
+                if choice == '1':
+                    continue
+                elif choice == '2':
+                    self.log("Force closing Chrome...")
+                    self._kill_chrome()
+                    time.sleep(2) # Give it a moment to release locks
+                elif choice == '3':
+                    self.log("Skipping extension update by user request.")
+                    return
+                else:
+                    print("Invalid option.")
+
+            # 4. Perform Replacement
+            self.log(f"Updating extension at {target_dir}...")
             
             # Create parent dir if needed
             os.makedirs(os.path.dirname(target_dir), exist_ok=True)
             
-            # Copy recursively
-            shutil.copytree(source_path, target_dir)
-            self.log("Extension deployed successfully.")
+            # Remove existing target
+            if os.path.exists(target_dir):
+                try:
+                    shutil.rmtree(target_dir)
+                except Exception as e:
+                    self.log(f"Failed to remove existing extension: {e}", "ERROR")
+                    print("\n[ERROR] Could not remove existing extension files.")
+                    print("Please ensure no other programs (like Chrome) are using them.")
+                    return
+            
+            # Move source to target (Move = Copy + Delete Source)
+            # Use copytree + rmtree to simulate move if crossing drives, or just move
+            try:
+                shutil.copytree(source_path, target_dir)
+                # Only delete source if we are NOT in dev mode (safety check)
+                # In dev mode (running from .py), we don't want to delete our source code!
+                if getattr(sys, 'frozen', False):
+                    shutil.rmtree(source_path)
+                    self.log("Source extension files cleaned up.")
+                else:
+                    self.log("Dev mode detected: Keeping source extension files.")
+                    
+                self.log("Extension deployed successfully.")
+                
+            except Exception as e:
+                self.log(f"Failed to move extension files: {e}", "ERROR")
 
         except Exception as e:
             self.log(f"Failed to deploy extension: {e}", "ERROR")
