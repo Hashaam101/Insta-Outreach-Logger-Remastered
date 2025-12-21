@@ -20,7 +20,10 @@ import json
 import winreg
 import tempfile
 import threading
+import re
+import pyzipper
 from tkinter import messagebox, filedialog
+from src.core.security import get_zip_password
 
 # Try to import tkinterdnd2 for drag and drop support
 try:
@@ -355,6 +358,64 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk):
         if DND_AVAILABLE:
             self._setup_drag_and_drop()
 
+        # Check for existing valid configuration
+        self._check_existing_files()
+
+    def _check_existing_files(self):
+        """Check if valid setup files already exist and update UI."""
+        config_path = os.path.join(project_root, 'local_config.py')
+        wallet_path = os.path.join(project_root, 'assets', 'wallet', 'cwallet.sso')
+
+        if os.path.exists(config_path) and os.path.exists(wallet_path):
+            self._show_status("Existing configuration found!", "success")
+            self.main_text_label.configure(text="System Configured")
+            self.subtext_label.configure(text="You can drop a new Setup_Pack.zip to overwrite")
+            self.click_frame.configure(border_color="#22c55e") # Green border
+            
+            # Load operators from existing config if possible
+            try:
+                # We can try to load operators using the existing config
+                # This mirrors _load_operators_from_zip but uses local files
+                self.db_status_label.configure(text="Loading operators...", text_color="#f59e0b")
+                threading.Thread(target=self._fetch_operators_from_local, daemon=True).start()
+            except Exception as e:
+                print(f"[Setup] Could not load operators from existing config: {e}")
+
+    def _fetch_operators_from_local(self):
+        """Background thread to fetch operators using existing local config."""
+        operators = []
+        error_msg = None
+        try:
+             # Add project root to path to import local_config
+            if project_root not in sys.path:
+                sys.path.insert(0, project_root)
+                
+            import local_config
+            import oracledb
+            
+            wallet_dir = os.path.join(project_root, 'assets', 'wallet')
+            
+            connection = oracledb.connect(
+                user=local_config.DB_USER,
+                password=local_config.DB_PASSWORD,
+                dsn=local_config.DB_DSN,
+                config_dir=wallet_dir
+            )
+
+            cursor = connection.cursor()
+            cursor.execute("SELECT DISTINCT OWNER_OPERATOR FROM ACTORS WHERE OWNER_OPERATOR IS NOT NULL")
+            rows = cursor.fetchall()
+            operators = [row[0] for row in rows if row[0]]
+
+            cursor.close()
+            connection.close()
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Setup] Error loading local operators: {e}")
+            
+        self.after(0, lambda: self._update_operators_ui(operators, error_msg))
+
     def _create_main_container(self):
         """Create the main scrollable container."""
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -667,6 +728,17 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk):
             self.click_frame.configure(border_color="#ef4444")
             self.install_button.configure(state="disabled")
 
+    def _get_zip_password_from_filename(self, zip_path):
+        """Extract token from filename and derive password."""
+        filename = os.path.basename(zip_path)
+        # Match Setup_Pack_<token>.zip
+        match = re.search(r'Setup_Pack_([a-fA-F0-9]+)\.zip', filename)
+        
+        if match:
+            token = match.group(1)
+            return get_zip_password(token)
+        return None
+
     def _validate_zip(self, zip_path):
         """
         Validate the zip file contains required files.
@@ -678,8 +750,22 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk):
         }
 
         try:
-            with zipfile.ZipFile(zip_path, 'r') as zf:
+            # Check for signed package first
+            password = self._get_zip_password_from_filename(zip_path)
+            
+            # Open with pyzipper to support AES
+            with pyzipper.AESZipFile(zip_path, 'r') as zf:
+                if password:
+                    zf.setpassword(password)
+                
                 file_list = zf.namelist()
+                
+                # Verify we can actually read the encrypted files (test first file)
+                if password:
+                    try:
+                        zf.read(file_list[0])
+                    except RuntimeError:
+                        return False, "Invalid Security Token (Decryption Failed)"
 
                 for file_name in file_list:
                     base_name = os.path.basename(file_name)
@@ -691,7 +777,7 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk):
                 if missing:
                     return False, f"Missing required files: {', '.join(missing)}"
 
-                return True, "Valid"
+                return True, "Valid Secure Package"
 
         except zipfile.BadZipFile:
             return False, "Invalid or corrupted zip file"
@@ -719,8 +805,14 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk):
             temp_wallet_dir = os.path.join(temp_dir, "wallet")
             os.makedirs(temp_wallet_dir, exist_ok=True)
 
+            # Get password
+            password = self._get_zip_password_from_filename(zip_path)
+
             # Extract needed files
-            with zipfile.ZipFile(zip_path, 'r') as zf:
+            with pyzipper.AESZipFile(zip_path, 'r') as zf:
+                if password:
+                    zf.setpassword(password)
+                    
                 for file_info in zf.infolist():
                     base_name = os.path.basename(file_info.filename)
                     if base_name == 'local_config.py':
@@ -895,7 +987,7 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk):
             raise
 
     def _install(self):
-        """Extract the Setup Pack to the correct locations."""
+        """Install by moving the Secure Setup Pack to the Documents secrets folder."""
         if not self.selected_file:
             return
 
@@ -923,57 +1015,47 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk):
         self.update()
 
         try:
-            wallet_dest = os.path.join(project_root, 'assets', 'wallet')
-            config_dest = os.path.join(project_root, 'local_config.py')
+            # 1. Prepare Destination
+            import shutil
+            docs_dir = os.path.join(os.path.expanduser("~"), "Documents")
+            secrets_dir = os.path.join(docs_dir, "Insta Logger Remastered", "secrets")
+            os.makedirs(secrets_dir, exist_ok=True)
+            
+            # Clean existing secrets to avoid confusion
+            for f in os.listdir(secrets_dir):
+                if f.startswith("Setup_Pack_") and f.endswith(".zip"):
+                    try:
+                        os.remove(os.path.join(secrets_dir, f))
+                    except Exception:
+                        pass
+            
+            # 2. Copy the Secure Pack
+            filename = os.path.basename(self.selected_file)
+            dest_path = os.path.join(secrets_dir, filename)
+            shutil.copy2(self.selected_file, dest_path)
+            print(f"[Setup] Secure Pack installed to: {dest_path}")
 
-            # Create wallet directory if it doesn't exist
-            os.makedirs(wallet_dest, exist_ok=True)
-
-            with zipfile.ZipFile(self.selected_file, 'r') as zf:
-                for file_info in zf.infolist():
-                    file_name = file_info.filename
-                    base_name = os.path.basename(file_name)
-
-                    # Skip directories and empty names
-                    if file_info.is_dir() or not base_name:
-                        continue
-
-                    # Determine destination
-                    if base_name == 'local_config.py':
-                        # Extract to project root
-                        dest_path = config_dest
-                        with zf.open(file_name) as src, open(dest_path, 'wb') as dst:
-                            dst.write(src.read())
-                        print(f"[Setup] Extracted: {base_name} -> {dest_path}")
-
-                    elif base_name in ['cwallet.sso', 'tnsnames.ora', 'sqlnet.ora', 'ewallet.pem', 'ewallet.p12']:
-                        # Extract wallet files to wallet directory
-                        dest_path = os.path.join(wallet_dest, base_name)
-                        with zf.open(file_name) as src, open(dest_path, 'wb') as dst:
-                            dst.write(src.read())
-                        print(f"[Setup] Extracted: {base_name} -> {dest_path}")
-
-            # --- Save Operator Config ---
+            # 3. Save Operator Config
             config_path = os.path.join(project_root, 'operator_config.json')
             with open(config_path, 'w') as f:
                 json.dump({
                     'operator_name': operator_name,
                     'is_new': self.operator_autocomplete.is_new_operator
                 }, f)
-            print(f"[Setup] Saved Operator Name: {operator_name} (new: {self.operator_autocomplete.is_new_operator})")
+            print(f"[Setup] Saved Operator Name: {operator_name}")
 
-            # --- Register Native Messaging Host ---
+            # 4. Register Native Messaging Host
             self._show_status("Registering Native Host...", "info")
             self._register_native_host(ext_id)
 
             self._show_status("Setup complete! Launching application...", "success")
             self.update()
 
-            # Show success message
             messagebox.showinfo(
                 "Setup Complete",
-                "Credentials installed & Native Host registered!\n\n"
-                "The application will now start."
+                "Secure Configuration Installed!\n\n"
+                "The application will now start.\n"
+                "Your secrets are safely stored in Documents."
             )
 
             # Close wizard and signal success

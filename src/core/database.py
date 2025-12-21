@@ -25,7 +25,12 @@ class DatabaseManager:
         """
         Initializes the DatabaseManager, setting up the connection to the Oracle database.
         """
-        wallet_location = os.path.join(PROJECT_ROOT, 'assets', 'wallet')
+        # Prioritize dynamic secure wallet (from SecretsManager)
+        wallet_location = os.environ.get('DB_WALLET_DIR')
+        
+        # Fallback to local dev path
+        if not wallet_location:
+            wallet_location = os.path.join(PROJECT_ROOT, 'assets', 'wallet')
         
         if not os.path.exists(wallet_location) or not os.listdir(wallet_location):
             raise FileNotFoundError(f"Wallet directory is empty or not found at {wallet_location}")

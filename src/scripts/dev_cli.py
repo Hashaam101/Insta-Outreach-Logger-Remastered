@@ -12,6 +12,7 @@ import subprocess
 import zipfile
 import re
 import time
+import pyzipper
 
 # Path setup
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,6 +20,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '../../'))
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.core.version import __version__, __app_name__
+from src.core.security import generate_token, get_zip_password
 
 
 class Colors:
@@ -329,13 +331,21 @@ def action_create_distribution_zip():
 
 
 def action_generate_setup_pack():
-    """Generate Setup_Pack.zip containing wallet and local_config.py."""
-    print(f"\n{Colors.CYAN}[Pack] Generating Setup_Pack.zip...{Colors.END}\n")
+    """Generate Setup_Pack_<token>.zip containing wallet and local_config.py."""
+    print(f"\n{Colors.CYAN}[Pack] Generating Secure Setup_Pack...{Colors.END}\n")
 
     wallet_path = os.path.join(PROJECT_ROOT, 'assets', 'wallet')
     config_path = os.path.join(PROJECT_ROOT, 'local_config.py')
     dist_path = os.path.join(PROJECT_ROOT, 'dist')
-    output_path = os.path.join(dist_path, 'Setup_Pack.zip')
+
+    # Generate Token and Password
+    token = generate_token()
+    password = get_zip_password(token)
+    output_filename = f'Setup_Pack_{token}.zip'
+    output_path = os.path.join(dist_path, output_filename)
+
+    print(f"  Token: {token}")
+    print(f"  Target: {output_filename}")
 
     # Create dist directory if it doesn't exist
     os.makedirs(dist_path, exist_ok=True)
@@ -359,9 +369,11 @@ def action_generate_setup_pack():
             print(m)
         return False
 
-    # Create the zip file
+    # Create the zip file with AES encryption
     try:
-        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        with pyzipper.AESZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as zf:
+            zf.setpassword(password)
+            
             # Add wallet folder
             for root, dirs, files in os.walk(wallet_path):
                 for file in files:
@@ -375,7 +387,7 @@ def action_generate_setup_pack():
             print(f"  + local_config.py")
 
         size_kb = os.path.getsize(output_path) / 1024
-        print(f"\n{Colors.GREEN}[Success] Setup_Pack.zip created!{Colors.END}")
+        print(f"\n{Colors.GREEN}[Success] {output_filename} created!{Colors.END}")
         print(f"  Output: {output_path}")
         print(f"  Size: {size_kb:.2f} KB")
         return True

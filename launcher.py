@@ -130,12 +130,23 @@ class Launcher:
             print(f"[{level}] {message}")
 
     def check_credentials(self):
-        """Check if required credentials exist."""
+        """Check if required credentials exist (Secure Zip OR Legacy Local Files)."""
+        # 1. Check for Secure Setup Pack
+        try:
+            from src.core.secrets_manager import SecretsManager
+            sm = SecretsManager()
+            if sm.zip_path:
+                self.log(f"Secure setup pack found: {sm.zip_path}")
+                return True
+        except Exception as e:
+            self.log(f"Error checking secure credentials: {e}", "WARNING")
+
+        # 2. Legacy/Dev Check
         config_exists = os.path.exists(self.config_path)
         wallet_exists = os.path.exists(self.wallet_path)
 
-        self.log(f"Config exists: {config_exists} ({self.config_path})")
-        self.log(f"Wallet exists: {wallet_exists} ({self.wallet_path})")
+        self.log(f"Local Config exists: {config_exists}")
+        self.log(f"Local Wallet exists: {wallet_exists}")
 
         return config_exists and wallet_exists
 
@@ -362,27 +373,31 @@ class Launcher:
             # Change to project root directory
             print(f"[Launcher] Changing directory to: {PROJECT_ROOT}")
             os.chdir(PROJECT_ROOT)
+            
+            # Initialize Secrets Manager (Unlock Credentials)
+            from src.core.secrets_manager import SecretsManager
+            
+            with SecretsManager() as secrets:
+                # Import and run the IPC server inside the secrets context
+                print("[Launcher] Importing IPC server...")
+                from src.core.ipc_server import IPCServer
+                print("[Launcher] IPC server imported successfully")
 
-            # Import and run the IPC server
-            print("[Launcher] Importing IPC server...")
-            from src.core.ipc_server import IPCServer
-            print("[Launcher] IPC server imported successfully")
+                print("=" * 50)
+                print(f"  {__app_name__}")
+                print(f"  Version {__version__}")
+                print("=" * 50)
 
-            print("=" * 50)
-            print(f"  {__app_name__}")
-            print(f"  Version {__version__}")
-            print("=" * 50)
+                print("[Launcher] Creating IPCServer instance...")
+                server = IPCServer()
+                print("[Launcher] IPCServer created, starting...")
 
-            print("[Launcher] Creating IPCServer instance...")
-            server = IPCServer()
-            print("[Launcher] IPCServer created, starting...")
-
-            try:
-                server.start()
-            except KeyboardInterrupt:
-                print("\n[Launcher] Shutdown requested...")
-            finally:
-                server.stop()
+                try:
+                    server.start()
+                except KeyboardInterrupt:
+                    print("\n[Launcher] Shutdown requested...")
+                finally:
+                    server.stop()
 
         except ImportError as e:
             self.log(f"Failed to import main application: {e}", "ERROR")
@@ -457,18 +472,91 @@ class Launcher:
         except Exception as e:
             self.log(f"Registration repair failed: {e}", "ERROR")
 
+    def deploy_extension(self):
+        """
+        Copy the Chrome Extension to the user's Documents folder.
+        This makes it easy for the user to load it into Chrome.
+        Target: Documents/Insta Logger Remastered/extension
+        """
+        try:
+            # 1. Determine Source Path
+            source_path = None
+            
+            # Check standard source location (dev mode or flat structure)
+            possible_path = os.path.join(PROJECT_ROOT, 'src', 'extension')
+            if os.path.exists(possible_path):
+                source_path = possible_path
+            
+            # Check _internal (PyInstaller onedir default)
+            if source_path is None:
+                possible_path = os.path.join(PROJECT_ROOT, '_internal', 'src', 'extension')
+                if os.path.exists(possible_path):
+                    source_path = possible_path
+
+            # Check sys._MEIPASS (PyInstaller onefile)
+            if source_path is None and hasattr(sys, '_MEIPASS'):
+                possible_path = os.path.join(sys._MEIPASS, 'src', 'extension')
+                if os.path.exists(possible_path):
+                    source_path = possible_path
+
+            if source_path is None:
+                self.log("Could not locate extension source folder. Skipping deployment.", "WARNING")
+                return
+
+            # 2. Determine Destination Path
+            docs_dir = os.path.join(os.path.expanduser("~"), "Documents")
+            target_dir = os.path.join(docs_dir, "Insta Logger Remastered", "extension")
+
+            self.log(f"Deploying extension from {source_path} to {target_dir}")
+
+            # 3. Copy Files
+            # Remove existing target to ensure clean state (updates, deleted files)
+            if os.path.exists(target_dir):
+                shutil.rmtree(target_dir)
+            
+            # Create parent dir if needed
+            os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+            
+            # Copy recursively
+            shutil.copytree(source_path, target_dir)
+            self.log("Extension deployed successfully.")
+
+        except Exception as e:
+            self.log(f"Failed to deploy extension: {e}", "ERROR")
+            log_crash(f"Extension deployment error: {e}", exc_info=True)
+
     def run(self):
         """
         Main launcher workflow:
-        1. Check credentials -> Run setup wizard if missing
-        2. Check for updates -> Download and apply if available
-        3. Launch main application
+        1. Show Menu (Start vs Reconfigure)
+        2. Check credentials -> Run setup wizard if missing
+        3. Check for updates -> Download and apply if available
+        4. Launch main application
         """
         print(f"\n{__app_name__} v{__version__}")
         print("-" * 40)
 
+        # --- Menu Loop ---
+        while True:
+            print("\n[MAIN MENU]")
+            print("1. Reconfigure Setup (Launch Wizard)")
+            print("[ENTER] Start Application")
+            
+            choice = input("\nSelect an option: ").strip()
+            
+            if choice == '1':
+                print("[Launcher] Force starting setup wizard...")
+                self.run_setup_wizard()
+                # After setup, proceed to start application check
+                break
+            elif choice == '':
+                # User pressed Enter, proceed to start
+                break
+            else:
+                print("Invalid option. Please try again.")
+
         # Step 1: Check credentials
-        print("[Launcher] Step 1: Checking credentials...")
+        print("\n[Launcher] Step 1: Checking credentials...")
         if not self.check_credentials():
             self.log("Credentials not found. Starting setup wizard...")
 
@@ -489,6 +577,10 @@ class Launcher:
         # Step 1.5: Ensure Native Host is Registered (Self-Repair)
         print("[Launcher] Step 1.5: Verifying Native Host Registration...")
         self.ensure_native_host_registration()
+
+        # Step 1.6: Deploy Extension to Documents
+        print("[Launcher] Step 1.6: Deploying Chrome Extension...")
+        self.deploy_extension()
 
         # Step 2: Check for updates
         print("[Launcher] Step 2: Checking for updates...")
