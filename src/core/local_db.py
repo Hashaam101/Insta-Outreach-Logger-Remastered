@@ -182,13 +182,14 @@ class LocalDatabase:
         except Exception as e:
             print(f"[LocalDB] Error applying cloud sync: {e}")
 
-    def log_outreach(self, log_data: dict) -> int:
+    def log_outreach(self, log_data: dict, new_status: str = 'Contacted') -> int:
         """
         Log a new outreach message from an enriched data dictionary.
         
         Args:
             log_data: A dictionary containing all log info, including
                       target, actor, operator, and message.
+            new_status: The status to set for the prospect (default 'Contacted').
         Returns:
             The ID of the newly inserted log entry.
         """
@@ -214,12 +215,18 @@ class LocalDatabase:
         log_id = self.cursor.lastrowid
 
         # Upsert the prospect record
+        # Use COALESCE or subquery to keep existing status if it's not 'new' or if we are forced to change it
+        # Actually, let's just use the provided new_status but logic in IPC will prevent it if Excluded.
         self.cursor.execute("""
             INSERT INTO prospects (target_username, status, last_updated)
-            VALUES (?, 'Contacted', ?)
+            VALUES (?, ?, ?)
             ON CONFLICT(target_username) DO UPDATE SET
+                status = CASE 
+                    WHEN status = 'new' THEN excluded.status 
+                    ELSE status 
+                END,
                 last_updated = excluded.last_updated
-        """, (log_data['target_username'], now))
+        """, (log_data['target_username'], new_status, now))
 
         self.conn.commit()
         return log_id

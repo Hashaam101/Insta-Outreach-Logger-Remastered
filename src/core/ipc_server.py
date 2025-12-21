@@ -207,6 +207,14 @@ class IPCServer:
             if not target or not actor:
                 return create_error_response("Missing 'target' or 'actor' in LOG_OUTREACH")
 
+            # Check if prospect is excluded
+            with self._lock:
+                local_prospect = self.db.get_prospect(target)
+            
+            if local_prospect and local_prospect.get('status') == 'Excluded':
+                print(f"[IPC] Skipping log for EXCLUDED prospect: {target}")
+                return create_ack_response(False, {"message": "Prospect is excluded from logging", "is_excluded": True})
+
             # Enrich the log with the Operator's identity
             enriched_log = {
                 "target_username": target,

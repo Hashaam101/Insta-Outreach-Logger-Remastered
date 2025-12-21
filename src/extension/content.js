@@ -330,7 +330,7 @@ function updateSyncStage(banner, stage) {
     if (!banner) return;
     stopBannerPulse();
     banner.style.boxShadow = '';
-    const allStages = ['sync-stage-local', 'sync-stage-cloud', 'sync-stage-downloading', 'sync-stage-complete', 'sync-stage-not-found', 'sync-stage-error', 'sync-stage-detection-failed'];
+    const allStages = ['sync-stage-local', 'sync-stage-cloud', 'sync-stage-downloading', 'sync-stage-complete', 'sync-stage-not-found', 'sync-stage-error', 'sync-stage-detection-failed', 'sync-stage-excluded'];
     banner.classList.remove(...allStages);
 
     if (stage) {
@@ -362,10 +362,11 @@ function formatDate(isoString) {
 async function showStatusBanner(state, data = {}) {
     document.querySelectorAll('.insta-warning-banner').forEach(b => b.remove());
 
+    const isExcluded = data.status === 'Excluded';
     const banner = document.createElement('div');
     banner.id = 'insta-warning-banner';
     banner.className = 'insta-warning-banner';
-    banner.dataset.state = state;
+    banner.dataset.state = isExcluded ? 'excluded' : state;
 
     if (data.syncStage) {
         banner.classList.add(`sync-stage-${data.syncStage}`);
@@ -373,9 +374,11 @@ async function showStatusBanner(state, data = {}) {
     }
 
     let isDraggable = false;
-    const STATUS_OPTIONS = ['Cold_NoReply', 'Rejected', 'Warm', 'Hot', 'Booked', 'Client'];
-    const optionsHtml = STATUS_OPTIONS.map(option =>
-        `<option value="${option}" ${data.status === option ? 'selected' : ''}>${option.replace('_', ' ')}</option>`
+    const STATUS_OPTIONS = ['Cold_NoReply', 'Rejected', 'Warm', 'Hot', 'Booked', 'Client', 'Excluded'];
+    
+    // Internal function to generate options HTML
+    const getOptionsHtml = (currentStatus) => STATUS_OPTIONS.map(option =>
+        `<option value="${option}" ${currentStatus === option ? 'selected' : ''}>${option.replace('_', ' ')}</option>`
     ).join('');
 
     const notesValue = data.notes || '';
@@ -391,29 +394,51 @@ async function showStatusBanner(state, data = {}) {
         case 'not_contacted':
             isDraggable = true;
             const isContacted = state === 'contacted';
-            banner.classList.add('banner-style-base', isContacted ? 'insta-warning-banner--contacted' : 'insta-warning-banner--not-contacted');
             
-            const iconUrl = chrome.runtime.getURL(isContacted ? 'assets/contacted-icon.svg' : 'assets/not-contacted-icon.svg');
+            // Apply theme based on status
+            if (isExcluded) {
+                banner.classList.add('banner-style-base', 'insta-warning-banner--excluded');
+            } else {
+                banner.classList.add('banner-style-base', isContacted ? 'insta-warning-banner--contacted' : 'insta-warning-banner--not-contacted');
+            }
+            
+            const iconUrl = chrome.runtime.getURL(isExcluded ? 'assets/contacted-icon.svg' : (isContacted ? 'assets/contacted-icon.svg' : 'assets/not-contacted-icon.svg'));
             const closeIconUrl = chrome.runtime.getURL('assets/close-icon.svg');
             const arrowUrl = chrome.runtime.getURL('assets/dropdown-arrow.svg');
             
             const rawActor = data.owner_actor;
             const actor = (rawActor && rawActor !== 'null' && rawActor !== 'None') ? rawActor : 'Unknown';
             const dateStr = formatDate(data.last_updated);
-            const subtitle = isContacted ? `By <b style="color:white;">${actor}</b> on <b style="color:white;">${dateStr}</b>` : 'Not Contacted Before';
+            
+            let subtitle = '';
+            if (isExcluded) {
+                subtitle = `<b style="color:#aaa;">EXCLUDED</b> from logging`;
+            } else {
+                subtitle = isContacted ? `By <b style="color:white;">${actor}</b> on <b style="color:white;">${dateStr}</b>` : 'Not Contacted Before';
+            }
+
             const hasNotes = notesValue && notesValue.trim().length > 0;
 
             banner.innerHTML = `
                 <div class="banner-content">
                     <img src="${iconUrl}" class="contact-icon">
                     <div class="contact-details">
-                        <p class="contact-title">${isContacted ? 'Previously Contacted' : 'Not Contacted Before'}</p>
-                        <p class="contact-subtitle">${subtitle}</p>
-                        <div class="status-dropdown-wrapper">
-                            <select class="status-dropdown">${optionsHtml}</select>
-                            <img src="${arrowUrl}" class="dropdown-arrow" />
+                        <div class="step-container" id="banner-step-1">
+                            <p class="contact-title">${isExcluded ? 'Excluded Target' : (isContacted ? 'Previously Contacted' : 'Not Contacted Before')}</p>
+                            <p class="contact-subtitle">${subtitle}</p>
+                            <div class="status-action-row" style="margin-top: 10px; display: flex; gap: 8px;">
+                                <button class="step-btn-contacted" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 0.8rem;">Previously Contacted</button>
+                                <button class="step-btn-not-contacted" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 0.8rem;">Not Contacted Before</button>
+                            </div>
                         </div>
-                        <div class="notes-container">
+                        <div class="step-container" id="banner-step-2" style="display: none;">
+                            <p class="contact-title">Update Status</p>
+                            <div class="status-dropdown-wrapper" style="margin-top: 8px;">
+                                <select class="status-dropdown">${getOptionsHtml(data.status)}</select>
+                                <img src="${arrowUrl}" class="dropdown-arrow" />
+                            </div>
+                        </div>
+                        <div class="notes-container" style="margin-top: 10px;">
                             ${hasNotes ? 
                                 `<textarea class="notes-textarea" maxlength="${charLimit}">${notesValue}</textarea>
                                  <div class="notes-footer"><span class="char-count">${notesValue.length}/${charLimit}</span><button class="save-notes-btn">Save Note</button></div>` :
@@ -431,12 +456,28 @@ async function showStatusBanner(state, data = {}) {
         default: return;
     }
 
+    // Step navigation logic
+    banner.querySelectorAll('.step-btn-contacted, .step-btn-not-contacted').forEach(btn => {
+        btn.addEventListener('click', () => {
+            banner.querySelector('#banner-step-1').style.display = 'none';
+            banner.querySelector('#banner-step-2').style.display = 'block';
+        });
+    });
+
     const dropdown = banner.querySelector('.status-dropdown');
     if (dropdown) {
         dropdown.addEventListener('change', () => {
             const textarea = banner.querySelector('.notes-textarea');
             updateDropdownSyncStage(dropdown, 'local');
-            updateProspectStatus(lastCheckedUsername, dropdown.value, dropdown, textarea ? textarea.value : null);
+            updateProspectStatus(lastCheckedUsername, dropdown.value, dropdown, textarea ? textarea.value : null, () => {
+                // Optionally go back to step 1 after sync
+                setTimeout(() => {
+                    if (banner.querySelector('#banner-step-2')) {
+                        // Refresh the whole banner to reflect new status/theme
+                        runProfileCheck(lastCheckedUsername, true);
+                    }
+                }, 1000);
+            });
         });
     }
 

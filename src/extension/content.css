@@ -42,6 +42,12 @@
     background-color: #073f1c;
 }
 
+/* Modifier class for the charcoal 'excluded' banner */
+.insta-warning-banner--excluded {
+    background-color: #1c1c1c;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
 /* Modifier class for the blue 'searching' banner */
 .insta-warning-banner--searching {
     background-color: #101828;
