@@ -62,6 +62,30 @@ chrome.runtime.onConnect.addListener((port) => {
             return;
         }
 
+        // Handle request for discovery (triggered when content script can't find actor)
+        if (message.type === 'REQUEST_ACTOR_DISCOVERY') {
+            console.log('Content script requested actor discovery.');
+            chrome.storage.local.get('actorUsername', (result) => {
+                if (result.actorUsername) {
+                    console.log('Actor username already exists, ignoring discovery request.');
+                    return;
+                }
+                
+                chrome.tabs.query({ url: "https://www.instagram.com/?discover_actor=true" }, (tabs) => {
+                    if (tabs && tabs.length > 0) {
+                        console.log('Discovery tab already open.');
+                        return;
+                    }
+                    
+                    console.log('Opening discovery tab...');
+                    chrome.tabs.create({ url: 'https://www.instagram.com/?discover_actor=true', active: false }, (tab) => {
+                        discoveryTabId = tab.id;
+                    });
+                });
+            });
+            return;
+        }
+
         // Store request info for response routing
         if (message.requestId) {
             let context = {};

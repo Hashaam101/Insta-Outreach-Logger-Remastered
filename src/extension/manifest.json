@@ -20,10 +20,12 @@
                 "https://www.instagram.com/*"
             ],
             "js": [
-                "content.js"
+                "content.js",
+                "scroller/scroller.js"
             ],
             "css": [
-                "content.css"
+                "content.css",
+                "scroller/scroller.css"
             ],
             "run_at": "document_end"
         }

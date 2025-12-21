@@ -187,11 +187,31 @@ async function handleActorSwitch(newUsername) {
 }
 
 async function checkForActorSwitch() {
-    const scrapedUsername = scrapeCurrentViewerUsername();
-    if (!scrapedUsername) return;
+    let storedUsername;
+    try {
+        const stored = await chrome.storage.local.get('actorUsername');
+        storedUsername = stored.actorUsername;
+    } catch (e) {
+        if (e.message.includes('Extension context invalidated')) {
+            console.log('[InstaLogger] Extension context invalidated. Stopping actor checks.');
+            if (actorCheckInterval) clearInterval(actorCheckInterval);
+            return;
+        }
+        console.error('[InstaLogger] Error checking actor username:', e);
+        return;
+    }
 
-    const stored = await chrome.storage.local.get('actorUsername');
-    const storedUsername = stored.actorUsername;
+    const scrapedUsername = scrapeCurrentViewerUsername();
+
+    // If we can't scrape the username AND we don't have one stored, we are lost.
+    if (!scrapedUsername) {
+        if (!storedUsername) {
+            // We don't know who the user is, and we can't see it on the page.
+            // Request the background script to help us find it.
+            sendMessageToBackground({ type: 'REQUEST_ACTOR_DISCOVERY' });
+        }
+        return;
+    }
 
     if (!currentActorUsername && storedUsername) {
         currentActorUsername = storedUsername;
