@@ -252,6 +252,49 @@ class LocalDatabase:
         self.conn.commit()
         return log_id
 
+    def get_unsynced_logs(self, limit: int = 100) -> list:
+        """
+        Retrieves a batch of outreach logs that haven't been synced to the cloud.
+
+        Args:
+            limit: Maximum number of logs to return.
+
+        Returns:
+            List of log dictionaries.
+        """
+        self.cursor.execute("""
+            SELECT id, target_username, actor_username, operator_name, message_snippet, timestamp
+            FROM outreach_logs
+            WHERE synced_to_cloud = 0
+            LIMIT ?
+        """, (limit,))
+        
+        rows = self.cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_synced(self, log_ids: list) -> int:
+        """
+        Marks the specified logs as synced to the cloud.
+
+        Args:
+            log_ids: List of log IDs to update.
+
+        Returns:
+            Number of records updated.
+        """
+        if not log_ids:
+            return 0
+            
+        placeholders = ",".join("?" * len(log_ids))
+        self.cursor.execute(f"""
+            UPDATE outreach_logs
+            SET synced_to_cloud = 1
+            WHERE id IN ({placeholders})
+        """, log_ids)
+        
+        self.conn.commit()
+        return self.cursor.rowcount
+
     def get_prospect(self, target_username: str) -> dict:
         """
         Retrieve a single prospect's local record.
@@ -334,7 +377,13 @@ if __name__ == "__main__":
 
     with LocalDatabase("test_local.db") as db:
         # Test logging outreach
-        log_id = db.log_outreach("test_user_123", "Hey! I saw your profile...")
+        test_log = {
+            "target_username": "test_user_123",
+            "actor_username": "my_actor_account",
+            "operator_name": "TestOperator",
+            "message_snippet": "Hey! I saw your profile..."
+        }
+        log_id = db.log_outreach(test_log)
         print(f"Created log entry: {log_id}")
 
         # Test getting unsynced logs
