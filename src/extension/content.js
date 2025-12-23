@@ -594,7 +594,7 @@ const handleUrlChange = () => {
     if (dmDiscoveryInterval) { clearInterval(dmDiscoveryInterval); dmDiscoveryInterval = null; }
     document.querySelectorAll('.insta-warning-banner').forEach(b => b.remove());
     stopBannerPulse();
-    const profileMatch = url.match(/https:\/\/www\.instagram\.com\/([a-zA-Z0-9_.]+)\/?$/);
+    const profileMatch = url.match(/https:\/\/www\.instagram\.com\/([a-zA-Z0-9_.]+)/);
     if (profileMatch && profileMatch[1] && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'login', 'p'].includes(profileMatch[1])) {
         lastCheckedUsername = profileMatch[1]; runProfileCheck(profileMatch[1]);
     } else if (url.includes('/direct/t/')) {

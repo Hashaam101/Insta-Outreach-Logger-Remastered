@@ -348,6 +348,19 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk): # type: igno
         self.instr_box.insert("0.0", txt)
         self.instr_box.configure(state="disabled")
 
+        self.open_ext_folder_button = ctk.CTkButton(self.ext_instruction_section, text="Open Extension Folder", command=self._open_extension_folder, fg_color="#2D2B40", hover_color="#4C4B63")
+        self.open_ext_folder_button.pack(pady=(10, 0), fill="x")
+
+    def _open_extension_folder(self):
+        """Opens the extension folder in the file explorer."""
+        docs_dir = os.path.join(os.path.expanduser("~"), "Documents")
+        extension_dir = os.path.join(docs_dir, "Insta Logger Remastered", "extension")
+        if os.path.exists(extension_dir):
+            # Use explorer for robustness on Windows
+            subprocess.run(['explorer', os.path.realpath(extension_dir)])
+        else:
+            messagebox.showwarning("Folder Not Found", f"The folder was not found at:\n{extension_dir}\n\nPlease return to the previous step and click 'Next Step' to ensure files are deployed.")
+
     def _create_extension_id_section(self):
         self.ext_id_section = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         ctk.CTkLabel(self.ext_id_section, text="Enter Extension ID", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w")
