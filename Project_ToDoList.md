@@ -41,3 +41,9 @@
 - [ ] Create GitHub Release v1.0.0.
 - [ ] Deploy Streamlit Dashboard to Cloud.
 - [ ] Distribute "Setup Packs" to team.
+
+## 🕵️ Phase 8: Contact Discovery Enhancements
+- [x] **Backend Module:** Implemented `ContactDiscoverer` and `ipc_server` integration.
+- [x] **Gatekeeper Logic:** Implemented `discovery_status` to block sync until discovery completes.
+- [x] **Bio Scraping:** Updated Chrome Extension (`content.js`) to scrape and cache profile Name/Link for better targeting.
+- [ ] **Advanced Fallback:** Implement `site:instagram.com` search fallback if bio scraping remains difficult.

@@ -64,14 +64,28 @@ class LocalDatabase:
                 owner_actor TEXT,
                 notes TEXT,
                 last_updated TEXT,
-                first_contacted TEXT
+                first_contacted TEXT,
+                email TEXT,
+                phone_number TEXT,
+                source_summary TEXT,
+                discovery_status TEXT DEFAULT 'pending'
             )
         """)
 
         # Migration: Ensure new columns exist for existing databases
-        for col in ["owner_actor TEXT", "notes TEXT", "first_contacted TEXT"]:
+        new_columns = [
+            "owner_actor TEXT", "notes TEXT", "first_contacted TEXT",
+            "email TEXT", "phone_number TEXT", "source_summary TEXT",
+            "discovery_status TEXT DEFAULT 'pending'"
+        ]
+        for col in new_columns:
             try:
-                self.cursor.execute(f"ALTER TABLE prospects ADD COLUMN {col}")
+                # Basic column extraction for ALTER command
+                col_def = col
+                if "DEFAULT" in col:
+                    # SQLite ALTER TABLE ADD COLUMN supports DEFAULT
+                    pass
+                self.cursor.execute(f"ALTER TABLE prospects ADD COLUMN {col_def}")
             except sqlite3.OperationalError:
                 pass # Column already exists
 
@@ -175,11 +189,21 @@ class LocalDatabase:
         if not cloud_prospects:
             return
 
-        print(f"[LocalDB] Syncing {len(cloud_prospects)} prospects from cloud...")
+        # Filter out prospects that are pending deletion locally
+        # This prevents a race condition where a deleted prospect is re-fetched from cloud
+        # before the deletion syncs up.
+        pending = set(self.get_pending_deletions())
+        filtered_prospects = [p for p in cloud_prospects if p['target_username'] not in pending]
+
+        if not filtered_prospects:
+            print("[LocalDB] All incoming cloud prospects are pending deletion. Skipping sync.")
+            return
+
+        print(f"[LocalDB] Syncing {len(filtered_prospects)} prospects from cloud...")
         fallback_now = datetime.now(timezone.utc).isoformat()
         
         data_to_insert = []
-        for p in cloud_prospects:
+        for p in filtered_prospects:
             ts = p.get('last_updated')
             ts_str = ts.isoformat() if hasattr(ts, 'isoformat') else str(ts) if ts else fallback_now
             
@@ -192,18 +216,24 @@ class LocalDatabase:
                 p.get('owner_actor'),
                 p.get('notes'),
                 ts_str,
-                fc_str
+                fc_str,
+                p.get('email'),
+                p.get('phone_number'),
+                p.get('source_summary')
             ))
 
         sql = """
-            INSERT INTO prospects (target_username, status, owner_actor, notes, last_updated, first_contacted)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO prospects (target_username, status, owner_actor, notes, last_updated, first_contacted, email, phone_number, source_summary, discovery_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'complete')
             ON CONFLICT(target_username) DO UPDATE SET
                 status = excluded.status,
                 owner_actor = excluded.owner_actor,
                 notes = excluded.notes,
                 last_updated = excluded.last_updated,
-                first_contacted = COALESCE(prospects.first_contacted, excluded.first_contacted)
+                first_contacted = COALESCE(prospects.first_contacted, excluded.first_contacted),
+                email = excluded.email,
+                phone_number = excluded.phone_number,
+                source_summary = excluded.source_summary
         """
         
         try:
@@ -237,17 +267,19 @@ class LocalDatabase:
         log_id = self.cursor.lastrowid
 
         # Upsert the prospect record
+        # Update owner_actor to the current actor logging the outreach
         self.cursor.execute("""
-            INSERT INTO prospects (target_username, status, last_updated, first_contacted)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO prospects (target_username, status, last_updated, first_contacted, owner_actor, discovery_status)
+            VALUES (?, ?, ?, ?, ?, 'pending')
             ON CONFLICT(target_username) DO UPDATE SET
                 status = CASE 
                     WHEN status = 'new' THEN excluded.status 
                     ELSE status 
                 END,
                 last_updated = excluded.last_updated,
-                first_contacted = COALESCE(prospects.first_contacted, excluded.first_contacted)
-        """, (log_data['target_username'], new_status, log_ts, log_ts))
+                first_contacted = COALESCE(prospects.first_contacted, excluded.first_contacted),
+                owner_actor = excluded.owner_actor
+        """, (log_data['target_username'], new_status, log_ts, log_ts, log_data['actor_username']))
 
         self.conn.commit()
         return log_id
@@ -300,7 +332,7 @@ class LocalDatabase:
         Retrieve a single prospect's local record.
         """
         self.cursor.execute("""
-            SELECT target_username, status, owner_actor, notes, last_updated, first_contacted
+            SELECT target_username, status, owner_actor, notes, last_updated, first_contacted, email, phone_number, source_summary, discovery_status
             FROM prospects
             WHERE target_username = ?
         """, (target_username,))
@@ -317,7 +349,7 @@ class LocalDatabase:
             
         placeholders = ",".join("?" * len(usernames))
         self.cursor.execute(f"""
-            SELECT target_username, status, owner_actor, notes, last_updated, first_contacted
+            SELECT target_username, status, owner_actor, notes, last_updated, first_contacted, email, phone_number, source_summary, discovery_status
             FROM prospects
             WHERE target_username IN ({placeholders})
         """, usernames)
@@ -354,6 +386,32 @@ class LocalDatabase:
 
         self.conn.commit()
         return self.cursor.rowcount > 0
+
+    def update_prospect_contact_info(self, target_username: str, email: str, phone_number: str, source_summary: str):
+        """
+        Updates the contact info for a prospect and marks discovery as complete.
+        """
+        print(f"[LocalDB] Saving contact info for {target_username}: Email={email}, Phone={phone_number}")
+        self.cursor.execute("""
+            UPDATE prospects
+            SET email = COALESCE(?, email),
+                phone_number = COALESCE(?, phone_number),
+                source_summary = COALESCE(?, source_summary),
+                discovery_status = 'complete'
+            WHERE target_username = ?
+        """, (email, phone_number, source_summary, target_username))
+        self.conn.commit()
+
+    def set_discovery_complete(self, target_username: str):
+        """
+        Marks the discovery status as complete (e.g., when no data found).
+        """
+        self.cursor.execute("""
+            UPDATE prospects
+            SET discovery_status = 'complete'
+            WHERE target_username = ?
+        """, (target_username,))
+        self.conn.commit()
 
     def close(self):
         """Close the database connection gracefully."""

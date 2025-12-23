@@ -158,7 +158,7 @@ all_binaries = sqlite_bin + vc_binaries + binaries
 all_binaries = [b for b in all_binaries if b]
 
 a = Analysis(
-    [os.path.join(project_root, 'launcher.py')],
+    [os.path.join(project_root, 'start_gui.py')],
     pathex=[project_root],
     binaries=all_binaries,
     datas=[
@@ -172,6 +172,9 @@ a = Analysis(
         'sqlite3',
         '_sqlite3',
         'pandas',
+        'bs4',
+        'requests',
+        'PIL'
     ] + hiddenimports,
     hookspath=[],
     hooksconfig={{}},

@@ -25,6 +25,7 @@ let pendingCallbacks = new Map();
 let messageIdCounter = 0;
 
 function connectPort() {
+    if (!chrome.runtime?.id) return; // Context invalidated
     try {
         port = chrome.runtime.connect({ name: 'content-script' });
         port.onMessage.addListener((message) => {
@@ -59,7 +60,9 @@ function fetchCachedActors() {
 }
 
 function sendMessageToBackground(data, callback) {
+    if (!chrome.runtime?.id) return; // Context invalidated
     if (!port) connectPort();
+    if (!port) return; // Still no port?
     try {
         if (callback) {
             const requestId = ++messageIdCounter;
@@ -76,6 +79,83 @@ function sendMessageToBackground(data, callback) {
 // =============================================================================
 // 1. Discovery & Actor Logic
 // =============================================================================
+
+function scrapeProfileData(username) {
+    // Safety check: Ensure we are still on the correct profile page
+    if (!window.location.href.includes(username)) {
+        return null;
+    }
+
+    try {
+        let fullName = "";
+        
+        // Strategy A: Open Graph Title
+        const ogTitle = document.querySelector('meta[property="og:title"]')?.content;
+        if (ogTitle && ogTitle.includes(`@${username}`)) {
+            const match = ogTitle.match(/^(.*?) \(@/);
+            if (match) fullName = match[1];
+        }
+
+        // Strategy B: Page Title
+        if (!fullName) {
+            const titleMatch = document.title.match(/^(.*?) \(@/);
+            if (titleMatch) fullName = titleMatch[1];
+        }
+
+        // Strategy C: H1 Header
+        if (!fullName) {
+            const h1 = document.querySelector('header h1');
+            if (h1) fullName = h1.innerText;
+        }
+        
+        if (fullName && /^\d+/.test(fullName)) {
+             const headerHeaders = document.querySelectorAll('header h2');
+             for (const h2 of headerHeaders) {
+                 if (h2.innerText.length > 2) {
+                     fullName = h2.innerText; 
+                     break;
+                 }
+             }
+        }
+
+        // Bio Scraping
+        let bioText = "";
+        let externalLink = "";
+        const header = document.querySelector('header');
+        if (header) {
+            const linkEl = header.querySelector('a[rel*="nofollow"]');
+            if (linkEl) externalLink = linkEl.href;
+            bioText = header.innerText; 
+        }
+        
+        const ogDesc = document.querySelector('meta[property="og:description"]')?.content;
+        if (!bioText && ogDesc) bioText = ogDesc;
+
+        if (fullName || bioText || externalLink) {
+            return {
+                fullName: fullName,
+                bio: bioText ? bioText.substring(0, 1000) : "", // Increased limit
+                externalLink: externalLink,
+                timestamp: Date.now()
+            };
+        }
+    } catch (e) {
+        console.error("[InstaLogger] Scraping failed:", e);
+    }
+    return null;
+}
+
+function cacheProfile(username) {
+    const data = scrapeProfileData(username);
+    if (data) {
+        chrome.storage.local.get('profileCache', (res) => {
+            const cache = res.profileCache || {};
+            cache[username] = data;
+            chrome.storage.local.set({ profileCache: cache });
+            console.log(`[InstaLogger] Cached data for ${username}:`, data);
+        });
+    }
+}
 
 function scrapeCurrentViewerUsername() {
     const profileLinks = Array.from(document.querySelectorAll('a[href^="/"]'));
@@ -457,14 +537,35 @@ function deleteProspect(username) {
 
 async function updateProspectStatus(username, newStatus, dropdown, notes = null, callback = null) {
     const actorUsername = await getActorUsername();
-    sendMessageToBackground({
-        type: 'UPDATE_PROSPECT_STATUS',
-        payload: { target: username, new_status: newStatus, actor: actorUsername, notes: notes }
-    }, (response) => {
-        if (response?.success || response?.data?.success) updateDropdownSyncStage(dropdown, 'synced');
-        else updateDropdownSyncStage(dropdown, 'error');
-        if (callback) callback();
-        setTimeout(() => updateDropdownSyncStage(dropdown, null), 2000);
+    
+    // Retrieve cached profile data
+    chrome.storage.local.get('profileCache', (result) => {
+        const cache = result.profileCache || {};
+        let profileData = cache[username];
+
+        // Fallback: Scrape immediately if cache is missing
+        if (!profileData) {
+            console.log(`[InstaLogger] Cache miss for ${username}, scraping on-demand...`);
+            profileData = scrapeProfileData(username);
+        }
+
+        profileData = profileData || {}; // Ensure object exists
+
+        sendMessageToBackground({
+            type: 'UPDATE_PROSPECT_STATUS',
+            payload: { 
+                target: username, 
+                new_status: newStatus, 
+                actor: actorUsername, 
+                notes: notes,
+                profile_data: profileData 
+            }
+        }, (response) => {
+            if (response?.success || response?.data?.success) updateDropdownSyncStage(dropdown, 'synced');
+            else updateDropdownSyncStage(dropdown, 'error');
+            if (callback) callback();
+            setTimeout(() => updateDropdownSyncStage(dropdown, null), 2000);
+        });
     });
 }
 
@@ -564,8 +665,31 @@ async function logOutreach(inputElement) {
     if (!text) return;
     const actor = await getActorUsername();
     if (!lastCheckedUsername || lastCheckedUsername.startsWith('unknown') || actor === 'unknown_actor') return;
-    sendMessageToBackground({ type: 'LOG_OUTREACH', payload: { target: lastCheckedUsername, actor: actor, message: text.substring(0, 200) } }, (res) => {
-        if (res?.success || res?.data?.log_id) setTimeout(() => { if (lastCheckedUsername && !isCheckInProgress) runProfileCheck(lastCheckedUsername, true); }, 500);
+    
+    // Retrieve cached profile data to send with the log
+    chrome.storage.local.get('profileCache', (result) => {
+        const cache = result.profileCache || {};
+        let profileData = cache[lastCheckedUsername];
+        
+        // Fallback: Scrape immediately if cache is missing
+        if (!profileData) {
+            console.log(`[InstaLogger] Cache miss for ${lastCheckedUsername}, scraping on-demand...`);
+            profileData = scrapeProfileData(lastCheckedUsername);
+        }
+
+        profileData = profileData || {};
+
+        sendMessageToBackground({ 
+            type: 'LOG_OUTREACH', 
+            payload: { 
+                target: lastCheckedUsername, 
+                actor: actor, 
+                message: text.substring(0, 200),
+                profile_data: profileData 
+            } 
+        }, (res) => {
+            if (res?.success || res?.data?.log_id) setTimeout(() => { if (lastCheckedUsername && !isCheckInProgress) runProfileCheck(lastCheckedUsername, true); }, 500);
+        });
     });
 }
 
@@ -596,7 +720,10 @@ const handleUrlChange = () => {
     stopBannerPulse();
     const profileMatch = url.match(/https:\/\/www\.instagram\.com\/([a-zA-Z0-9_.]+)/);
     if (profileMatch && profileMatch[1] && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'login', 'p'].includes(profileMatch[1])) {
-        lastCheckedUsername = profileMatch[1]; runProfileCheck(profileMatch[1]);
+        lastCheckedUsername = profileMatch[1]; 
+        runProfileCheck(profileMatch[1]);
+        // Trigger scraping
+        setTimeout(() => cacheProfile(profileMatch[1]), 1500);
     } else if (url.includes('/direct/t/')) {
         showStatusBanner('searching', { syncStage: 'local' });
         let attempts = 0;

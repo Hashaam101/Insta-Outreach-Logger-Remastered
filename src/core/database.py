@@ -149,19 +149,22 @@ class DatabaseManager:
         """
         Bulk ensures prospects exist in the PROSPECTS table.
         Args:
-            prospects: List of dicts with 'target_username', 'owner_actor', 'status', and 'first_contacted'.
+            prospects: List of dicts with 'target_username', 'owner_actor', 'status', 'first_contacted', 'email', 'phone_number', 'source_summary'.
         """
         print(f"[OracleDB] Upserting {len(prospects)} prospects...")
         sql = """
             MERGE INTO PROSPECTS p
-            USING (SELECT :target_username AS TARGET_USERNAME, :owner_actor AS OWNER_ACTOR, :status AS STATUS, :first_contacted AS FIRST_CONTACTED FROM dual) new
+            USING (SELECT :target_username AS TARGET_USERNAME, :owner_actor AS OWNER_ACTOR, :status AS STATUS, :first_contacted AS FIRST_CONTACTED, :email AS EMAIL, :phone_number AS PHONE_NUMBER, :source_summary AS SOURCE_SUMMARY FROM dual) new
             ON (p.TARGET_USERNAME = new.TARGET_USERNAME)
             WHEN MATCHED THEN
                 UPDATE SET STATUS = new.STATUS, LAST_UPDATED = CURRENT_TIMESTAMP,
-                           FIRST_CONTACTED = COALESCE(p.FIRST_CONTACTED, new.FIRST_CONTACTED)
+                           FIRST_CONTACTED = COALESCE(p.FIRST_CONTACTED, new.FIRST_CONTACTED),
+                           EMAIL = COALESCE(new.EMAIL, p.EMAIL),
+                           PHONE_NUMBER = COALESCE(new.PHONE_NUMBER, p.PHONE_NUMBER),
+                           SOURCE_SUMMARY = COALESCE(new.SOURCE_SUMMARY, p.SOURCE_SUMMARY)
             WHEN NOT MATCHED THEN
-                INSERT (TARGET_USERNAME, OWNER_ACTOR, STATUS, LAST_UPDATED, FIRST_CONTACTED)
-                VALUES (new.TARGET_USERNAME, new.OWNER_ACTOR, new.STATUS, CURRENT_TIMESTAMP, new.FIRST_CONTACTED)
+                INSERT (TARGET_USERNAME, OWNER_ACTOR, STATUS, LAST_UPDATED, FIRST_CONTACTED, EMAIL, PHONE_NUMBER, SOURCE_SUMMARY)
+                VALUES (new.TARGET_USERNAME, new.OWNER_ACTOR, new.STATUS, CURRENT_TIMESTAMP, new.FIRST_CONTACTED, new.EMAIL, new.PHONE_NUMBER, new.SOURCE_SUMMARY)
         """
         # Convert string timestamps to datetime if present
         for p in prospects:
@@ -214,9 +217,9 @@ class DatabaseManager:
             target_username: The Instagram username to look up.
 
         Returns:
-            Dict: {'target_username', 'status', 'owner_actor', 'notes', 'last_updated'} if found, None otherwise.
+            Dict: {'target_username', 'status', 'owner_actor', 'notes', 'last_updated', 'email', 'phone_number', 'source_summary'} if found, None otherwise.
         """
-        sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED FROM PROSPECTS WHERE TARGET_USERNAME = :1"
+        sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED, EMAIL, PHONE_NUMBER, SOURCE_SUMMARY FROM PROSPECTS WHERE TARGET_USERNAME = :1"
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql, [target_username])
@@ -227,7 +230,10 @@ class DatabaseManager:
                         'status': row[1],
                         'owner_actor': row[2],
                         'notes': row[3],
-                        'last_updated': row[4]
+                        'last_updated': row[4],
+                        'email': row[5],
+                        'phone_number': row[6],
+                        'source_summary': row[7]
                     }
                 return None
 
@@ -267,13 +273,21 @@ class DatabaseManager:
                 connection.commit()
 
     def delete_prospect(self, username: str):
-        """Deletes a prospect from the Oracle database."""
-        sql = "DELETE FROM PROSPECTS WHERE TARGET_USERNAME = :1"
+        """Deletes a prospect and their logs from the Oracle database."""
+        # 1. Delete associated logs first (FK constraint)
+        sql_logs = "DELETE FROM OUTREACH_LOGS WHERE TARGET_USERNAME = :1"
+        # 2. Delete prospect
+        sql_prospect = "DELETE FROM PROSPECTS WHERE TARGET_USERNAME = :1"
+        
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, [username])
+                cursor.execute(sql_logs, [username])
+                logs_deleted = cursor.rowcount
+                cursor.execute(sql_prospect, [username])
+                prospects_deleted = cursor.rowcount
                 connection.commit()
-        print(f"[OracleDB] Deleted prospect: {username}")
+        
+        print(f"[OracleDB] Deleted prospect: {username} (and {logs_deleted} logs)")
 
     def get_all_actors(self) -> list:
         """Returns a list of all unique actor usernames."""
@@ -292,10 +306,10 @@ class DatabaseManager:
             since_timestamp: ISO format string or datetime object.
             
         Returns:
-            List of dicts: {'target_username', 'status', 'owner_actor', 'notes', 'last_updated', 'first_contacted'}
+            List of dicts: {'target_username', 'status', 'owner_actor', 'notes', 'last_updated', 'first_contacted', 'email', 'phone_number', 'source_summary'}
         """
         if since_timestamp:
-            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED, FIRST_CONTACTED FROM PROSPECTS WHERE LAST_UPDATED > :1"
+            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED, FIRST_CONTACTED, EMAIL, PHONE_NUMBER, SOURCE_SUMMARY FROM PROSPECTS WHERE LAST_UPDATED > :1"
             # Ensure timestamp is in a format Oracle likes (datetime object)
             if isinstance(since_timestamp, str):
                 try:
@@ -304,7 +318,7 @@ class DatabaseManager:
                     pass
             params = [since_timestamp]
         else:
-            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED, FIRST_CONTACTED FROM PROSPECTS"
+            sql = "SELECT TARGET_USERNAME, STATUS, OWNER_ACTOR, NOTES, LAST_UPDATED, FIRST_CONTACTED, EMAIL, PHONE_NUMBER, SOURCE_SUMMARY FROM PROSPECTS"
             params = []
 
         with self.get_connection() as connection:
@@ -319,7 +333,10 @@ class DatabaseManager:
                         'owner_actor': row[2],
                         'notes': row[3],
                         'last_updated': row[4],
-                        'first_contacted': row[5]
+                        'first_contacted': row[5],
+                        'email': row[6],
+                        'phone_number': row[7],
+                        'source_summary': row[8]
                     }
                     for row in rows
                 ]

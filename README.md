@@ -31,6 +31,36 @@ Insta Outreach Logger is a specialized tool designed to track high-volume Instag
 
 ---
 
+## 🕵️ Contact Discovery Module
+
+A background intelligence process that enriches prospect profiles with contact information (Email/Phone) immediately after they are discovered.
+
+### 1. Trigger
+This process runs in the background immediately after a new profile is saved to the local database (either via manual message logging or status change).
+
+### 2. Strategy - Step 1 (Direct)
+-   **Full Header Scraping**: The extension scrapes the entire profile header text (Name, Bio, Link, Address) to ensure no visible contact info is missed.
+-   **Intelligent Name Extraction**: Prioritizes `og:title` metadata to correctly capture the Business Name instead of the address.
+-   **Link Analysis**: Checks if a "Bio Link" exists. If present, the module visits the target website (automatically decoding `l.instagram.com` redirects) and crawls for:
+    -   `mailto:` links.
+    -   `tel:` links.
+    -   "Contact Us" pages.
+
+### 3. Strategy - Step 2 (Fallback)
+If Step 1 yields no results, the module initiates a headless DuckDuckGo search.
+-   **Query Format**: `"{Business Name} {Address from Bio} phone email"`
+-   **Parsing**: Analyzes search snippets to identify and extract patterns matching email addresses and phone numbers.
+-   **Validation**: Applies strict regex validation to ensure phone numbers match standard US formats (e.g., `(808) 555-0199`) and filters out noise.
+
+### 4. Sync Gating & Data Schema
+-   **Gatekeeper Logic**: The system blocks cloud synchronization for a specific prospect until the discovery process is complete (`discovery_status: 'complete'`). This prevents incomplete records from polluting the Oracle Cloud DB.
+-   **Fields**:
+    -   `email` (string): Discovered email address.
+    -   `phone_number` (string): Discovered phone number.
+    -   `source_summary` (string): Origin of the data (e.g., "Found on Website footer" or "DuckDuckGo Snippet").
+
+---
+
 ## 🌐 Web Dashboard (Command Center)
 
 The Command Center is a web-based interface built with Streamlit that provides a centralized location for administrators and team leads to manage the outreach process. It allows users to:
@@ -107,39 +137,22 @@ To completely remove the application and all its data:
 
 3.  **Run in Development Mode**:
     ```bash
-    # Run the Launcher (handles extension deployment & secrets)
-    python launcher.py --skip-update --debug
+    # Run the GUI Application (Primary Entry Point)
+    python start_gui.py
     ```
 
-### Developer CLI (`dev_cli.py`)
+### Desktop GUI (Command Center)
 
-The Developer CLI is an interactive toolkit for building, packaging, and managing releases.
+The application features a modern desktop interface built with `customtkinter`. It is divided into two main sections:
 
-```bash
-python src/scripts/dev_cli.py
-```
+#### 1. Dashboard Tab (Visual Overview)
+-   **Live Status**: Displays real-time actions (e.g., "Scanning Bio...", "Syncing with Oracle...").
+-   **Stats Grid**: Real-time counters for Profiles Scraped, Emails Found, Phone Numbers Found, and Errors.
+-   **Activity Feed**: A chronological list of high-level intelligence events.
 
-**Menu Options:**
-
-| Option | Description |
-|--------|-------------|
-| **1. Compile** | Runs PyInstaller (One-Folder mode) to create `dist/InstaLogger/`. |
-| **2. Generate Setup_Pack** | Generates **Secure** `Setup_Pack_<token>.zip` (AES-256 Encrypted). |
-| **3. Bump Version & Tag** | Updates `src/core/version.py`, creates a git tag, and optionally pushes to remote. |
-| **4. Clean Artifacts** | Removes `build/`, `dist/`, `*.spec`, and `__pycache__` directories. |
-| **5. MASTER BUILD** | Full pipeline: Clean → Bump → Pack → Compile → Zip |
-
-### Architecture Notes
-
-**Secure Secrets Management:**
--   **Setup Pack**: Generated with a random token in the filename.
--   **Password**: Derived via `HMAC-SHA256(MASTER_KEY, token)`.
--   **Runtime**: `SecretsManager` context manager finds the zip in `Documents/Insta Logger Remastered/secrets`, decrypts it to a **RAM-disk equivalent temp folder**, sets environment variables, and wipes the folder on exit.
-
-**Extension Deployment:**
--   **Source**: `src/extension` (inside the executable).
--   **Target**: `Documents/Insta Logger Remastered/extension`.
--   **Behavior**: On startup, checks if the target exists. If so, skips. If Chrome is running during an update, prompts the user to force close it.
+#### 2. Raw Console Tab
+-   **Unified Logging**: Intercepts `stdout` and `stderr` to display all internal engine logs in a scrollable view.
+-   **Stdout Redirector**: Ensures that background processing logs from the IPC Server and Discovery Module are visible without a terminal.
 
 ---
 
@@ -153,6 +166,7 @@ python src/scripts/dev_cli.py
 ├── src/
 │   ├── core/
 │   │   ├── ipc_server.py   # IPC Server & Operator Management
+│   │   ├── contact_discovery.py # Background Intelligence Module
 │   │   ├── secrets_manager.py # Dynamic Credential Decryption
 │   │   ├── security.py     # Crypto Logic
 │   │   ├── database.py     # Oracle Cloud Database Manager
@@ -164,8 +178,10 @@ python src/scripts/dev_cli.py
 │   │   ├── background.js
 │   │   └── content.js      # Hardened with MutationObserver
 │   └── gui/
+│       ├── app_ui.py       # Main CustomTkinter GUI
 │       └── setup_wizard.py # Secure Setup GUI
-├── launcher.py             # Main Entry Point (Bootstrapper & Auto-Update)
+├── start_gui.py            # Primary Entry Point (GUI)
+├── launcher.py             # Bootstrapper & Auto-Update
 ├── uninstall.py            # Clean Uninstaller
 ├── dashboard.py            # Streamlit Web Dashboard
 ├── requirements.txt

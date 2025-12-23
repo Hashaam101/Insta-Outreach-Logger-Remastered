@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from local_db import LocalDatabase
 from sync_engine import SyncEngine
+from contact_discovery import ContactDiscoverer
 from ipc_protocol import (
     PORT,
     AUTH_KEY,
@@ -126,6 +127,33 @@ class IPCServer:
         for cid in client_ids:
             self._send_to_client(cid, msg)
 
+    def _run_background_discovery(self, profile_id, profile_data):
+        """
+        Runs the Contact Discovery module in a background thread.
+        """
+        try:
+            discoverer = ContactDiscoverer()
+            print(f"[Discovery] Starting background discovery for {profile_id}...")
+            result = discoverer.process_profile(profile_data)
+            
+            if result and (result.get('email') or result.get('phone_number')):
+                print(f"[Discovery] Found contact info for {profile_id}: {result}")
+                # Use lock to access the shared db connection
+                with self._lock:
+                    self.db.update_prospect_contact_info(
+                        profile_id, 
+                        result.get('email'), 
+                        result.get('phone_number'), 
+                        result.get('source')
+                    )
+            else:
+                print(f"[Discovery] No contact info found for {profile_id}.")
+                with self._lock:
+                    self.db.set_discovery_complete(profile_id)
+        except Exception as e:
+            print(f"[Discovery] Error processing {profile_id}: {e}")
+            traceback.print_exc()
+
     def handle_client(self, client_socket: socket.socket, client_addr: tuple):
         client_id = f"{client_addr[0]}:{client_addr[1]}"
         print(f"[IPC] Client connected: {client_id}")
@@ -206,6 +234,7 @@ class IPCServer:
             payload = msg.get("payload", msg)
             target = payload.get("target")
             actor = payload.get("actor") # Actor is now sent from the extension
+            print(f"[Debug] Log Outreach received for {target}")
             message = payload.get("message", "")
             custom_ts = payload.get("timestamp") # Optional custom timestamp for manual logs
 
@@ -241,6 +270,26 @@ class IPCServer:
             with self._lock:
                 log_id = self.db.log_outreach(enriched_log)
 
+            # Trigger Background Discovery
+            # Extract profile_data from payload (sent by extension)
+            raw_profile_data = payload.get("profile_data", {})
+            print(f"[Discovery] Received Profile Content: {raw_profile_data}")
+            
+            # Construct discovery_data using scraped info
+            discovery_data = {
+                "target_username": target,
+                "name": raw_profile_data.get("fullName"),
+                "bio_link": raw_profile_data.get("externalLink"),
+                "biography": raw_profile_data.get("bio")
+            }
+            
+            print(f"[Debug] Spawning discovery thread for {target} with data keys: {list(discovery_data.keys())}")
+            threading.Thread(
+                target=self._run_background_discovery, 
+                args=(target, discovery_data), 
+                daemon=True
+            ).start()
+
             print(f"[IPC] Queued outreach from Operator '{self.operator_name}' via Actor '{actor}': to {target} (Manual: {bool(custom_ts)})")
             return create_ack_response(True, {"log_id": log_id})
 
@@ -256,6 +305,7 @@ class IPCServer:
             target = payload.get("target")
             if not target: return create_error_response("Missing target")
             
+            print(f"[IPC] Deletion requested for {target}")
             with self._lock:
                 self.db.delete_prospect_local(target)
             return create_ack_response(True, {"success": True})
@@ -345,6 +395,22 @@ class IPCServer:
             }
             with self._lock:
                 self.db.log_outreach(status_change_log)
+
+            # Trigger Background Discovery (for manual status changes)
+            raw_profile_data = payload.get("profile_data", {})
+            print(f"[Discovery] Received Profile Content: {raw_profile_data}")
+
+            discovery_data = {
+                "target_username": target,
+                "name": raw_profile_data.get("fullName"),
+                "bio_link": raw_profile_data.get("externalLink"),
+                "biography": raw_profile_data.get("bio")
+            }
+            threading.Thread(
+                target=self._run_background_discovery, 
+                args=(target, discovery_data), 
+                daemon=True
+            ).start()
 
             print(f"[IPC] Local update complete. Change queued for cloud sync.")
             return create_ack_response(True, {"success": True})

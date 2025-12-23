@@ -8,3 +8,7 @@ tkinterdnd2
 cryptography
 matplotlib
 pyzipper
+beautifulsoup4
+requests
+Pillow
+pyinstaller

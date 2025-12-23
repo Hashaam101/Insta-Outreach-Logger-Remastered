@@ -144,6 +144,28 @@ class SyncEngine:
             print(f"[SyncEngine] Processing {len(unsynced_logs)} logs for Operator '{self.operator_name}'")
             
             # --- Step 2: Extract unique entities ---
+            unique_targets = list({log['target_username'] for log in unsynced_logs})
+            local_prospects = local_db.get_prospects_batch(unique_targets)
+
+            # Filter out prospects that are still pending discovery
+            ready_logs = []
+            skipped_count = 0
+            for log in unsynced_logs:
+                target = log['target_username']
+                prospect = local_prospects.get(target)
+                # If prospect missing (deleted?) or pending, skip
+                if not prospect or prospect.get('discovery_status') == 'pending':
+                    skipped_count += 1
+                    continue
+                ready_logs.append(log)
+
+            if skipped_count > 0:
+                print(f"[SyncEngine] Skipped {skipped_count} logs (Discovery pending).")
+
+            if not ready_logs:
+                return
+
+            unsynced_logs = ready_logs
             unique_actors = {log['actor_username'] for log in unsynced_logs}
             unique_prospects = {(log['target_username'], log['actor_username']) for log in unsynced_logs}
 
@@ -165,7 +187,10 @@ class SyncEngine:
                     'target_username': target,
                     'owner_actor': actor,
                     'status': p_data.get('status', 'new'),
-                    'first_contacted': p_data.get('first_contacted')
+                    'first_contacted': p_data.get('first_contacted'),
+                    'email': p_data.get('email'),
+                    'phone_number': p_data.get('phone_number'),
+                    'source_summary': p_data.get('source_summary')
                 })
 
             if prospects_to_upsert:
@@ -222,6 +247,17 @@ class SyncEngine:
         except Exception as e:
             print(f"[SyncEngine] Error updating prospect status in Oracle: {e}")
             raise
+
+    def trigger_sync(self):
+        """
+        Manually triggers a sync cycle in a thread-safe manner.
+        """
+        print("[SyncEngine] Manual sync requested...")
+        threading.Thread(target=self._manual_sync_worker, daemon=True).start()
+
+    def _manual_sync_worker(self):
+        with self._lock:
+            self.sync_cycle()
 
     def _sync_loop(self):
         print("[SyncEngine] Background sync thread started.")
