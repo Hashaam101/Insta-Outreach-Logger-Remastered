@@ -175,6 +175,7 @@ a = Analysis(
         'bs4',
         'requests',
         'PIL'
+        'getpass',
     ] + hiddenimports,
     hookspath=[],
     hooksconfig={{}},
