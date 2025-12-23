@@ -172,6 +172,7 @@ a = Analysis(
         'sqlite3',
         '_sqlite3',
         'pandas',
+        'getpass',
     ] + hiddenimports,
     hookspath=[],
     hooksconfig={{}},
