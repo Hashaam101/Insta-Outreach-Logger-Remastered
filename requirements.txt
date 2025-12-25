@@ -1,13 +1,9 @@
-streamlit
-pandas
 oracledb
-jinja2
-openpyxl
+pandas
 customtkinter
 tkinterdnd2
-cryptography
-matplotlib
 pyzipper
+cryptography
 beautifulsoup4
 requests
 Pillow

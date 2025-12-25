@@ -49,7 +49,7 @@ A modern web-based interface built with **Next.js 14** for centralized outreach 
 - **📊 Real-Time KPIs**: Live metrics for prospects, outreach volume, and booking rates.
 - **📋 Lead Management**: Searchable grid to manage prospect status and notes.
 
-> **Note**: The dashboard code is maintained in the `dashboard` branch.
+> **Note**: The dashboard code is maintained in a separate repository: [insta-outreach-logger-dashboard](https://github.com/Hashaam101/insta-outreach-logger-dashboard).
 
 ---
 
@@ -82,4 +82,4 @@ Acts as a high-speed cache and offline queue for the desktop application.
 - [x] Phase 1-6: Core Bridge, Extension, and Sync Engine (Complete)
 - [x] Phase 7: Optimization & Delta Sync (Complete)
 - [x] Phase 8: Contact Discovery Enhancements (Complete)
-- [x] Phase 9: Next.js Dashboard Migration (Complete - see `dashboard` branch)
+- [x] Phase 9: Next.js Dashboard Migration (Complete - see [dashboard repo](https://github.com/Hashaam101/insta-outreach-logger-dashboard))

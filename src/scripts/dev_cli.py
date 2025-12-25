@@ -174,7 +174,7 @@ a = Analysis(
         'pandas',
         'bs4',
         'requests',
-        'PIL'
+        'PIL',
         'getpass',
     ] + hiddenimports,
     hookspath=[],
