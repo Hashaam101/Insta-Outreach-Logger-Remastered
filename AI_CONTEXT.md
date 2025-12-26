@@ -64,6 +64,20 @@ When the user visits an Instagram profile page or opens a DM thread, the extensi
 
 ---
 
+## 🖥️ Web Dashboard (Command Center)
+
+A separate, modern web application for centralized management and analytics.
+
+-   **Tech Stack**: Next.js 14, Tailwind CSS, TypeScript.
+-   **Repository**: [https://github.com/Hashaam101/insta-outreach-logger-dashboard](https://github.com/Hashaam101/insta-outreach-logger-dashboard)
+-   **Functionality**:
+    -   **Analytics**: Visualizes team performance, outreach volume, and booking rates.
+    -   **Lead Management**: Grid view for filtering and updating prospect statuses.
+    -   **Operator Management**: Admin interface for managing team members and access.
+    -   **Authentication**: Google OAuth integration linked to Operator IDs.
+
+---
+
 ## 💾 Database Architectures
 
 ### Local Database (SQLite)
@@ -102,7 +116,7 @@ All major development phases are complete. The application is a functional end-t
 
 -   **Phase 1: Foundation & Backend Logic:** Complete (Oracle migration).
 -   **Phase 2: Chrome Extension & Bridge:** Complete (Hardened v12).
--   **Phase 3: Admin Command Center:** Complete (Streamlit).
+-   **Phase 3: Admin Command Center:** Complete (Migrated to separate [Next.js Dashboard repo](https://github.com/Hashaam101/insta-outreach-logger-dashboard)).
 -   **Phase 4: Auto-Discovery Architecture:** Complete.
 -   **Phase 5: Real-Time Status Check:** Complete.
 -   **Phase 6: Packaging & Distribution:** Complete (Dev CLI, Setup Wizard, Launcher).
