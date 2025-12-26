@@ -8,7 +8,47 @@ import oracledb
 from pandas.core.series import Series
 
 # --- Page Config ---
-st.set_page_config(layout="wide", page_title="Insta Outreach Command Center")
+st.set_page_config(layout="wide", page_title="Insta Outreach Command Center", page_icon="assets/logo.ico")
+
+# --- Custom CSS ---
+st.markdown("""
+<style>
+    /* Main container */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        padding-left: 5rem;
+        padding-right: 5rem;
+    }
+    /* Title */
+    h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+    }
+    /* Headers */
+    h2 {
+        font-size: 2rem;
+        font-weight: 600;
+    }
+    /* Subheaders */
+    h3 {
+        font-size: 1.5rem;
+        font-weight: 500;
+    }
+    /* KPI Metrics */
+    .stMetric {
+        border: 1px solid #262730;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        background-color: #0E1117;
+    }
+    /* Dataframes */
+    .stDataFrame {
+        border: 1px solid #262730;
+        border-radius: 0.5rem;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- Database Connection using Streamlit Secrets ---
 @st.cache_resource
@@ -124,22 +164,24 @@ else:
         st.header("Performance Overview")
 
         # --- Controls ---
-        control_cols = st.columns(2)
-        with control_cols[0]:
-            view_mode = st.radio(
-                "Group Analytics By",
-                ["Operator", "Actor"],
-                key="view_mode",
-                horizontal=True,
-                help="Changes the grouping for all charts on this page."
-            )
-        with control_cols[1]:
-            date_filter = st.radio(
-                "Filter by Date",
-                ["All Time", "Today", "This Week", "This Month"],
-                horizontal=True,
-                key="date_filter"
-            )
+        with st.container():
+            st.subheader("Filters")
+            control_cols = st.columns(2)
+            with control_cols[0]:
+                view_mode = st.radio(
+                    "Group Analytics By",
+                    ["Operator", "Actor"],
+                    key="view_mode",
+                    horizontal=True,
+                    help="Changes the grouping for all charts on this page."
+                )
+            with control_cols[1]:
+                date_filter = st.radio(
+                    "Filter by Date",
+                    ["All Time", "Today", "This Week", "This Month"],
+                    horizontal=True,
+                    key="date_filter"
+                )
 
         grouping_col = 'OWNER_OPERATOR' if view_mode == "Operator" else 'ACTOR_USERNAME'
 
@@ -160,49 +202,100 @@ else:
         st.divider()
 
         # --- KPIs ---
-        st.subheader("High-Level KPIs")
-        kpi_cols = st.columns(3)
-        total_dms = len(filtered_df)
-        unique_prospects = filtered_df['TARGET_USERNAME'].nunique()
+        with st.container():
+            st.subheader("High-Level KPIs")
+            kpi_cols = st.columns(3)
+            total_dms = len(filtered_df)
+            unique_prospects = filtered_df['TARGET_USERNAME'].nunique()
 
-        total_active_days = 0
-        if time_series is not None and not filtered_df.empty:
-            total_active_days = filtered_df['Time (GMT+5)'].dt.date.nunique()
+            total_active_days = 0
+            if time_series is not None and not filtered_df.empty:
+                total_active_days = filtered_df['Time (GMT+5)'].dt.date.nunique()
 
-        avg_dms_per_day = total_dms / total_active_days if total_active_days > 0 else 0
+            avg_dms_per_day = total_dms / total_active_days if total_active_days > 0 else 0
 
-        kpi_cols[0].metric("Total DMs Sent", f"{total_dms:,}")
-        kpi_cols[1].metric("Unique Prospects Contacted", f"{unique_prospects:,}")
+            kpi_cols[0].metric("Total DMs Sent", f"{total_dms:,}")
+            kpi_cols[1].metric("Unique Prospects Contacted", f"{unique_prospects:,}")
 
-        if date_filter != "Today":
-            kpi_cols[2].metric("Avg. DMs Per Day", f"{avg_dms_per_day:.1f}")
-        else:
-            kpi_cols[2].metric("Avg. DMs Per Day", "-")
+            if date_filter != "Today":
+                kpi_cols[2].metric("Avg. DMs Per Day", f"{avg_dms_per_day:.1f}")
+            else:
+                kpi_cols[2].metric("Avg. DMs Per Day", "-")
 
         st.divider()
 
         # --- Charts ---
-        chart_cols = st.columns(2)
-        with chart_cols[0]:
-            st.subheader("Leaderboard")
-            if not filtered_df.empty:
-                leaderboard = filtered_df[grouping_col].value_counts().reset_index()
-                leaderboard.columns = [grouping_col, 'Messages Sent']
-                st.dataframe(leaderboard, use_container_width=True)
-            else:
-                st.write("No data for this period.")
+        with st.container():
+            chart_cols = st.columns(2)
+            with chart_cols[0]:
+                st.subheader("Leaderboard")
+                if not filtered_df.empty:
+                    leaderboard = filtered_df[grouping_col].value_counts().reset_index()
+                    leaderboard.columns = [grouping_col, 'Messages Sent']
+                    st.dataframe(leaderboard, use_container_width=True)
+                else:
+                    st.write("No data for this period.")
 
-        with chart_cols[1]:
-            st.subheader("Performance Over Time")
-            if not filtered_df.empty:
-                dms_per_day = filtered_df.set_index('Time (GMT+5)').resample('D').size()
-                st.line_chart(dms_per_day)
-            else:
-                st.write("No data for this period.")
+            with chart_cols[1]:
+                st.subheader("Performance Over Time")
+                if not filtered_df.empty:
+                    dms_per_day = filtered_df.set_index('Time (GMT+5)').resample('D').size()
+                    st.line_chart(dms_per_day)
+                else:
+                    st.write("No data for this period.")
 
         # --- Daily Matrix ---
-        st.subheader("Daily Activity Heatmap")
-        if not filtered_df.empty:
+        with st.container():
+            st.subheader("Daily Activity Heatmap")
+            if not filtered_df.empty:
+                filtered_df['Date'] = filtered_df['Time (GMT+5)'].dt.date
+
+                pivot_table = pd.pivot_table(
+                    filtered_df,
+                    index='Date',
+                    columns=grouping_col,
+                    values='TARGET_USERNAME',
+                    aggfunc='count',
+                    fill_value=0
+                )
+                pivot_table.columns.name = None
+                pivot_table = pivot_table.sort_index(ascending=False)
+
+                if pivot_table.empty:
+                    st.info("No outreach data available for the selected filters.")
+                else:
+                    try:
+                        st.dataframe(
+                            pivot_table.style.background_gradient(cmap="Greens", axis=None).format("{:.0f}"),
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        # Fallback if styling fails (e.g., missing dependencies)
+                        st.warning(f"Could not render styled table: {e}")
+                        st.dataframe(pivot_table, use_container_width=True)
+            else:
+                st.write("No data for this period.")
+
+    # =========================================================================
+    # TAB 2: LEAD MANAGEMENT (CRM)
+    # =========================================================================
+    with tab2:
+        st.header("Lead Management CRM")
+        prospects_df = load_prospects_data()
+        if not prospects_df.empty:
+            st.dataframe(prospects_df, use_container_width=True)
+        else:
+            st.write("No prospects data found.")
+
+    # =========================================================================
+    # TAB 3: MESSAGE LOG
+    # =========================================================================
+    with tab3:
+        st.header("Raw Message Log")
+        column_order = ["Time (GMT+5)", "OWNER_OPERATOR", "ACTOR_USERNAME", "TARGET_USERNAME", "MESSAGE_TEXT", "STATUS"]
+        display_cols = [col for col in column_order if col in df.columns]
+        st.dataframe(df[display_cols], use_container_width=True)
+f.empty:
             filtered_df['Date'] = filtered_df['Time (GMT+5)'].dt.date
 
             pivot_table = pd.pivot_table(
