@@ -1,0 +1,404 @@
+<mxfile host="65bd71144e">
+    <diagram id="ucl-65w2EFcWXbkSAtOJ" name="Global Architecture">
+        <mxGraphModel dx="2800" dy="1500" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1400" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="header_title" value="InstaCRM Ecosystem - Global Architecture (Planned)&#xa;Aligned with schema.dbml | Distributed Stealth CRM" style="text;html=1;strokeColor=#666666;fillColor=#f5f5f5;align=center;verticalAlign=middle;rounded=1;fontStyle=1;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="350" y="10" width="500" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="swim_desktop" value="DESKTOP ECOSYSTEM (Python + Chrome Extension)" style="swimlane;horizontal=1;startSize=50;collapsible=0;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;container=0;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="-30" y="60" width="430" height="1320" as="geometry"/>
+                </mxCell>
+                <mxCell id="save_config" value="Save Config&#xa;OPR_ID + ACT_ID&#xa;(local_config.json)" style="shape=note;whiteSpace=wrap;html=1;size=14;verticalAlign=top;align=center;container=0;fontSize=10;" parent="swim_desktop" vertex="1">
+                    <mxGeometry x="80" y="340" width="120" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_7" parent="swim_desktop" source="chrome_ext" target="stealth_bridge" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_8" parent="swim_desktop" source="stealth_bridge" target="preflight_check" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_9" value="Violates Rule" parent="swim_desktop" source="preflight_check" target="warn_user" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="chrome_ext" value="Chrome Extension v3&#xa;(Zero Network Footprint)&#xa;Capture DM + Scrape Actor" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;container=0;fontSize=11;" parent="swim_desktop" vertex="1">
+                    <mxGeometry x="55" y="440" width="170" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="stealth_bridge" value="Stealth Bridge (Python IPC)&#xa;Enrich: OPR_ID + ACT_ID&#xa;Discover: TAR_ID from username" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;container=0;fontSize=11;" parent="swim_desktop" vertex="1">
+                    <mxGeometry x="55" y="540" width="170" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="preflight_check" value="Pre-Flight Check&#xa;RULES Table&#xa;Frequency Cap?&#xa;Interval Spacing?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;container=0;fontSize=10;" parent="swim_desktop" vertex="1">
+                    <mxGeometry x="245" y="520" width="170" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="warn_user" value="Soft Warning&#xa;UI Notification&#xa;(Proceed Anyway?)" style="text;html=1;strokeColor=#b85450;fillColor=#f8cecc;align=center;verticalAlign=middle;rounded=1;container=0;fontSize=10;" parent="swim_desktop" vertex="1">
+                    <mxGeometry x="280" y="430" width="100" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="local_sqlite_detail" value="Local SQLite Schema:&#xa;- event_logs (temp_id, synced=0)&#xa;- outreach_logs (elg_id FK)&#xa;- targets (cached status)&#xa;- rules (synced limits)&#xa;- goals (synced targets)&#xa;- meta (last_sync_ts)" style="text;html=1;strokeColor=#6c8ebf;fillColor=#dae8fc;align=left;verticalAlign=top;rounded=1;fontSize=9;spacingLeft=5;" parent="swim_desktop" vertex="1">
+                    <mxGeometry x="250" y="730" width="150" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="swim_cloud" value="CLOUD CORE (Oracle ATP - Source of Truth)" style="swimlane;horizontal=1;startSize=50;collapsible=0;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;container=0;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="60" width="420" height="1320" as="geometry"/>
+                </mxCell>
+                <mxCell id="gen_opr_id" value="Generate OPR_ID&#xa;Format: OPR-A1DC2A4B&#xa;(Prefix + 8-char CAPS Hex)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;container=0;fontSize=11;" parent="swim_cloud" vertex="1">
+                    <mxGeometry x="120" y="360" width="180" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="oracle_db" value="Oracle ATP&#xa;(Master DB)&#xa;Free Tier" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;container=0;fontSize=12;" parent="swim_cloud" vertex="1">
+                    <mxGeometry x="150" y="620" width="100" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="schema_box" value="ORACLE SCHEMA (schema.dbml)" style="swimlane;startSize=25;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" parent="swim_cloud" vertex="1">
+                    <mxGeometry x="20" y="920" width="380" height="380" as="geometry"/>
+                </mxCell>
+                <mxCell id="tbl_opr" value="OPERATORS&#xa;OPR_ID (PK): OPR-XXXXXXXX&#xa;OPR_EMAIL, OPR_NAME (unique)&#xa;OPR_STATUS: online|offline" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;align=left;spacingLeft=5;fillColor=#fff2cc;" parent="schema_box" vertex="1">
+                    <mxGeometry x="10" y="35" width="170" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="tbl_act" value="ACTORS&#xa;ACT_ID (PK): ACT-XXXXXXXX&#xa;ACT_USERNAME, OPR_ID (FK)&#xa;ACT_STATUS: Active|Suspended|Discarded" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;align=left;spacingLeft=5;fillColor=#fff2cc;" parent="schema_box" vertex="1">
+                    <mxGeometry x="200" y="35" width="170" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="tbl_tar" value="TARGETS&#xa;TAR_ID (PK): TAR-XxXxXxXx&#xa;TAR_USERNAME (unique)&#xa;TAR_STATUS: Cold|Replied|Warm|Booked|Paid&#xa;EMAIL, PHONE_NUM, NOTES" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;align=left;spacingLeft=5;fillColor=#fff2cc;" parent="schema_box" vertex="1">
+                    <mxGeometry x="10" y="115" width="175" height="75" as="geometry"/>
+                </mxCell>
+                <mxCell id="tbl_elog" value="EVENT_LOGS (Parent)&#xa;ELG_ID (PK): ELG-XxXxXxXxXx&#xa;EVENT_TYPE: Outreach|Tar Register|...&#xa;ACT_ID, OPR_ID, TAR_ID (FKs)&#xa;DETAILS (JSON), CREATED_AT" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;align=left;spacingLeft=5;fillColor=#fff2cc;" parent="schema_box" vertex="1">
+                    <mxGeometry x="10" y="205" width="175" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="tbl_olog" value="OUTREACH_LOGS (Child 1:1)&#xa;OLG_ID (PK): OLG-XxXxXxXxXx&#xa;ELG_ID (FK unique)&#xa;MESSAGE_TEXT, SENT_AT" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;align=left;spacingLeft=5;fillColor=#fff2cc;" parent="schema_box" vertex="1">
+                    <mxGeometry x="200" y="205" width="170" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="tbl_goals" value="GOALS&#xa;GOAL_ID: GOL-XXXXXXXX&#xa;METRIC, TARGET_VALUE, FREQUENCY&#xa;ASSIGNED_TO_OPR, ASSIGNED_TO_ACT&#xa;STATUS: Active|Pending|Rejected" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;align=left;spacingLeft=5;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="schema_box" vertex="1">
+                    <mxGeometry x="10" y="300" width="170" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="tbl_rules" value="RULES&#xa;RULE_ID: RUL-XXXXXXXX&#xa;TYPE: Frequency Cap|Interval Spacing&#xa;LIMIT_VALUE, TIME_WINDOW_SEC&#xa;SEVERITY: Soft Warning" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;align=left;spacingLeft=5;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="schema_box" vertex="1">
+                    <mxGeometry x="200" y="300" width="170" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="link_opr_act" value="1:N" parent="schema_box" source="tbl_opr" target="tbl_act" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="link_elog_olog" value="1:1" parent="schema_box" source="tbl_elog" target="tbl_olog" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="swim_android" value="ANDROID COMPANION (Future)" style="swimlane;horizontal=1;startSize=50;collapsible=0;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;container=0;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="820" y="60" width="360" height="1320" as="geometry"/>
+                </mxCell>
+                <mxCell id="and_cache_check" value="Check Cache&#xa;(Cached TARGETS)&#xa;by TAR_USERNAME" style="rhombus;whiteSpace=wrap;html=1;container=0;fontSize=10;" parent="swim_android" vertex="1">
+                    <mxGeometry x="15" y="535" width="160" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_1" parent="1" source="start_desk" target="auth_google" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_2" parent="1" source="auth_google" target="check_name" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="360" y="280"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="edge_3" value="Yes (Collision)" parent="1" source="check_name" target="prompt_alias" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="450" y="360"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="edge_4" value="No (Unique)" parent="1" source="check_name" target="gen_opr_id" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_5" parent="1" source="prompt_alias" target="gen_opr_id" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_6" value="Return OPR_ID" parent="1" source="gen_opr_id" target="save_config" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_11" parent="1" source="process_log_save" target="db_sqlite" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_12" parent="1" source="db_sqlite" target="sync_trigger" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_13" parent="1" source="sync_trigger" target="step_push" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_14" parent="1" source="step_push" target="step_assign" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_15" parent="1" source="step_assign" target="oracle_db" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_16" parent="1" source="step_assign" target="step_pull" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_17" parent="1" source="step_pull" target="local_update" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_18" value="Commit" parent="1" source="local_update" target="db_sqlite" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="260" y="1030"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="edge_19" parent="1" source="sniffer" target="and_cache_check" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_20" value="Miss" parent="1" source="and_cache_check" target="ords_call" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_21" value="Hit" parent="1" source="and_cache_check" target="overlay" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="200" y="760"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="edge_22" parent="1" source="ords_call" target="overlay" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_23" parent="1" source="ords_call" target="oracle_db" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="360" y="730" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="edge_24" parent="1" source="and_sync" target="oracle_db" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="start_desk" value="Install &amp; Launch&#xa;InstaLogger.exe" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;container=0;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="110" y="140" width="130" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="auth_google" value="1. Google OAuth&#xa;(Get Email &amp; Name)&#xa;Link to OPR_ID" style="rounded=1;whiteSpace=wrap;html=1;container=0;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="240" width="160" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="db_sqlite" value="Local SQLite&#xa;(Offline-First)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;container=0;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="260" y="810" width="100" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="process_log_save" value="Generate TEMP_ID&#xa;(e.g., local_991)&#xa;Save EVENT_LOG + OUTREACH_LOG" style="rounded=1;whiteSpace=wrap;html=1;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="760" width="180" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="sync_trigger" value="Sync Engine&#xa;(Background Thread)&#xa;Delta Sync Protocol" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;container=0;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="940" width="160" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="local_update" value="UPDATE Local DB&#xa;Replace Temp IDs&#xa;{local_991 : ELG-A1b2...}&#xa;Refresh RULES + GOALS" style="rounded=1;whiteSpace=wrap;html=1;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="1040" width="170" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="check_name" value="Check OPR_NAME&#xa;Collision?" style="rhombus;whiteSpace=wrap;html=1;container=0;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="530" y="230" width="150" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="name_collision" value="Name Taken?" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="610" y="200" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="step_push" value="PUSH: New Logs&#xa;(With Temp IDs)&#xa;+ New TARGETS" style="rounded=1;whiteSpace=wrap;html=1;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="440" y="940" width="130" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="step_assign" value="Oracle Assigns&#xa;OFFICIAL IDs&#xa;ELG-XxXx, OLG-XxXx&#xa;TAR-XxXx (if new)" style="rounded=1;whiteSpace=wrap;html=1;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="940" width="140" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="step_pull" value="PULL: ID Mapping&#xa;{TempID : RealID}&#xa;+ Updated TARGETS&#xa;+ Active RULES &amp; GOALS" style="rounded=1;whiteSpace=wrap;html=1;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="1040" width="150" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="sniffer" value="Accessibility Service&#xa;(InstaSniffer)&#xa;Detect IG Profile View" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="875" y="510" width="150" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="ords_call" value="Call ORDS API&#xa;GET /targets/{username}&#xa;Returns TAR_STATUS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="1020" y="720" width="140" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="overlay" value="Render Overlay&#xa;Green: Not Contacted&#xa;Red: Previously Contacted" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="875" y="830" width="150" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="and_sync" value="Android Sync&#xa;(Get RULES + GOALS)" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="1020" y="930" width="140" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="prompt_alias" value="Prompt for Alias&#xa;(User chooses unique name)" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;container=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="200" y="330" width="170" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="edge_10" value="Pass" style="entryX=0.75;entryY=0;entryDx=0;entryDy=0;" parent="1" source="preflight_check" target="process_log_save" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="189" y="730" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="dashboard_ref" value="WEB DASHBOARD&#xa;(Next.js Dashboard)&#xa;See Dashboard Architecture page" style="text;html=1;strokeColor=#6c8ebf;fillColor=#dae8fc;align=center;verticalAlign=middle;rounded=1;fontSize=10;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="520" y="800" width="200" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="dashboard_edge" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;" parent="1" source="oracle_db" target="dashboard_ref" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="dashboard_arch" name="Dashboard Architecture">
+        <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1600" pageHeight="1600" math="0" shadow="0">
+            <root>
+                <mxCell id="arch0"/>
+                <mxCell id="arch1" parent="arch0"/>
+                <mxCell id="note_header" value="InstaCRM Dashboard - Dashboard Architecture&#xa;Aligned with schema.dbml | Oracle ATP Cloud Core" style="text;html=1;strokeColor=#666666;fillColor=#f5f5f5;align=center;verticalAlign=middle;rounded=1;fontStyle=1;fontSize=14;" vertex="1" parent="arch1">
+                    <mxGeometry x="440" y="10" width="500" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer_client" value="CLIENT LAYER (Next.js 16 App Router)" style="swimlane;horizontal=1;startSize=40;collapsible=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="arch1" vertex="1">
+                    <mxGeometry y="60" width="400" height="1350" as="geometry"/>
+                </mxCell>
+                <mxCell id="view_toggle" value="[View Context: My Data vs Team Data]&#xa;Controlled via /settings oprName filter" style="text;html=1;strokeColor=#82b366;fillColor=#d5e8d4;align=center;verticalAlign=middle;rounded=1;fontSize=10;" vertex="1" parent="layer_client">
+                    <mxGeometry x="50" y="50" width="300" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_dash" value="/ (Dashboard Home)&#xa;RSC + Suspense Boundaries&#xa;KPIs | Recent Activity Feed | Status Dist" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontStyle=1;fontSize=12;" parent="layer_client" vertex="1">
+                    <mxGeometry x="25" y="100" width="350" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_goals" value="/goals (Strategic Governance)&#xa;Democratic Goal Proposals&#xa;Safety Rule Management (Caps/Intervals)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;" parent="layer_client" vertex="1">
+                    <mxGeometry x="25" y="200" width="350" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_analytics" value="/analytics&#xa;Recharts Client Components&#xa;Volume Trends | Heatmap | Leaderboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontStyle=1;fontSize=12;" parent="layer_client" vertex="1">
+                    <mxGeometry x="25" y="350" width="350" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_leads" value="/leads (CRM Pipeline)&#xa;Faceted Filters (Multi-select)&#xa;Interaction History (Actor Lists)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontStyle=1;fontSize=12;" parent="layer_client" vertex="1">
+                    <mxGeometry x="25" y="500" width="350" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_actors" value="/actors (Fleet Management)&#xa;Grouped Shared Accounts&#xa;Performance Intel side-sheets" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontStyle=1;fontSize=12;" parent="layer_client" vertex="1">
+                    <mxGeometry x="25" y="650" width="350" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_operators" value="/operators (Resource Fleet)&#xa;Grouped by Team Member&#xa;Cross-Asset Productivity Intel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontStyle=1;fontSize=12;" parent="layer_client" vertex="1">
+                    <mxGeometry x="25" y="750" width="350" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_logs" value="/logs&#xa;Paginated Event History&#xa;Audit Trail: User | System | Outreach" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontStyle=1;fontSize=12;" parent="layer_client" vertex="1">
+                    <mxGeometry x="25" y="850" width="350" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_settings_profile" value="/settings/profile&#xa;Identity Management&#xa;Auth Security &amp; Operator ID" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontStyle=1;fontSize=12;" vertex="1" parent="layer_client">
+                    <mxGeometry x="25" y="950" width="170" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="page_settings_global" value="/settings/global&#xa;System Governance&#xa;Team Directory &amp; Asset Pool" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontStyle=1;fontSize=12;" vertex="1" parent="layer_client">
+                    <mxGeometry x="205" y="950" width="170" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer_server" value="SERVER LAYER (lib/data.ts + React Cache + unstable_cache)" style="swimlane;horizontal=1;startSize=40;collapsible=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" parent="arch1" vertex="1">
+                    <mxGeometry x="440" y="60" width="500" height="1350" as="geometry"/>
+                </mxCell>
+                <mxCell id="cache_note" value="Dual-Layer Caching: React cache() for request dedup + unstable_cache() for ISR&#xa;All functions support oprName? param for My vs Team filtering" style="text;html=1;strokeColor=#d79b00;fillColor=#ffe6cc;align=center;verticalAlign=middle;rounded=1;fontSize=9;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="50" width="440" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_stats" value="getCachedStats()&#xa;[60s, tags: stats, global]&#xa;Aggregates: TARGETS, OUTREACH_LOGS, ACTORS, OPERATORS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" parent="layer_server" vertex="1">
+                    <mxGeometry x="30" y="100" width="380" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_metrics" value="getCachedDashboardMetrics(oprName?)&#xa;[60s, tags: logs, prospects, metrics]&#xa;TOTAL_DMS | BOOKED_LEADS | POSITIVE_REPLIES | ACTIVE_24H" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="170" width="380" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_feed" value="getCachedRecentLogs(oprName?)&#xa;[30s, tags: logs, recent]&#xa;OUTREACH_LOGS JOIN ACTORS FETCH FIRST 10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" parent="layer_server" vertex="1">
+                    <mxGeometry x="30" y="240" width="380" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_volume" value="getCachedOutreachVolume(days=14)&#xa;[1h, tags: logs, analytics]&#xa;GROUP BY TRUNC(CREATED_AT) ORDER BY DATE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="310" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_heatmap" value="getCachedActivityHeatmap()&#xa;[1h] GROUP BY HOUR (HH24)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="380" width="220" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_leaderboard" value="getCachedOperatorPerformance(days)&#xa;[1h] GROUP BY OWNER_OPERATOR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="260" y="380" width="220" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_enrichment" value="getCachedEnrichmentStats(days)&#xa;[1h] COUNT(EMAIL), COUNT(PHONE)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="360" y="310" width="130" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_leads" value="getPagedLeads(page, pageSize, filters)&#xa;[No Cache - Realtime Pagination]&#xa;Filters: query, TAR_STATUS, operatorName scope" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="500" width="380" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_status_dist" value="getCachedStatusDistribution(oprName?)&#xa;[5m, tags: prospects, metrics]&#xa;GROUP BY TAR_STATUS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="570" width="380" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_actors" value="getCachedActorsWithStats(oprName?)&#xa;[5m, tags: actors, logs]&#xa;Dual-Window Stats (Range 1 &amp; Range 2) support" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" parent="layer_server" vertex="1">
+                    <mxGeometry x="30" y="700" width="440" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_op_detailed" value="getOperatorDetailedStats(name)&#xa;[5m] Velocity | Lead Success | Utilization | Logs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="770" width="440" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_top_actors" value="getCachedTopActors()&#xa;[5m] Top 5 by DM count" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="830" width="220" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_logs" value="getPagedLogs(page, pageSize, filters)&#xa;[No Cache - Realtime Pagination]&#xa;Filters: operatorName, actorUsername" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" parent="layer_server" vertex="1">
+                    <mxGeometry x="30" y="900" width="380" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fn_op_stats" value="getCachedOperatorStats(oprName)&#xa;[60s, tags: logs, metrics]&#xa;MY_LOGS_24H | TEAM_LOGS_24H | ACTIVE_OPERATORS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="layer_server">
+                    <mxGeometry x="30" y="1100" width="380" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer_db" value="DATA LAYER (Oracle ATP - Thin Mode oracledb)" style="swimlane;horizontal=1;startSize=40;collapsible=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" parent="arch1" vertex="1">
+                    <mxGeometry x="980" y="60" width="400" height="1350" as="geometry"/>
+                </mxCell>
+                <mxCell id="db_security" value="Security: Bind Variables (:params) | Zod Validation&#xa;Pool: Max 10 connections (Free Tier OCPU limit)" style="text;html=1;strokeColor=#b85450;fillColor=#f8cecc;align=center;verticalAlign=middle;rounded=1;fontSize=9;" vertex="1" parent="layer_db">
+                    <mxGeometry x="50" y="50" width="300" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="db_aggs" value="KPI Aggregates (SELECT FROM DUAL)&#xa;COUNT(*) FROM TARGETS&#xa;COUNT(*) FROM OUTREACH_LOGS&#xa;COUNT(*) FROM ACTORS | OPERATORS" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;fontSize=11;" parent="layer_db" vertex="1">
+                    <mxGeometry x="85" y="100" width="250" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="db_trends" value="Time-Series Analytics&#xa;GROUP BY TRUNC(CREATED_AT)&#xa;GROUP BY TO_CHAR(HH24)&#xa;WHERE CREATED_AT &gt;= SYSDATE - :days" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;fontSize=11;" parent="layer_db" vertex="1">
+                    <mxGeometry x="85" y="310" width="250" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="db_targets" value="TARGETS (TAR_ID PK)&#xa;TAR_USERNAME (unique), TAR_STATUS&#xa;EMAIL, PHONE_NUM, CONT_SOURCE&#xa;FIRST_CONTACTED, LAST_UPDATED, NOTES&#xa;---&#xa;TAR_STATUS enum: Cold No Reply | Replied&#xa;Warm | Booked | Paid | Excluded" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;fontSize=11;" parent="layer_db" vertex="1">
+                    <mxGeometry x="60" y="500" width="280" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="db_actors" value="ACTORS (ACT_ID PK)&#xa;ACT_USERNAME, OPR_ID (FK)&#xa;ACT_STATUS, CREATED_AT, LAST_ACTIVITY&#xa;---&#xa;OPERATORS (OPR_ID PK)&#xa;OPR_EMAIL, OPR_NAME (unique)&#xa;OPR_STATUS, CREATED_AT, LAST_ACTIVITY" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;fontSize=11;" parent="layer_db" vertex="1">
+                    <mxGeometry x="60" y="700" width="280" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="db_logs" value="EVENT_LOGS (ELG_ID PK)&#xa;EVENT_TYPE, ACT_ID, OPR_ID, TAR_ID&#xa;DETAILS (JSON context), CREATED_AT&#xa;---&#xa;OUTREACH_LOGS (OLG_ID PK)&#xa;ELG_ID (FK 1:1), MESSAGE_TEXT, SENT_AT&#xa;[Child extension of EVENT_LOGS]" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;fontSize=11;" parent="layer_db" vertex="1">
+                    <mxGeometry x="60" y="900" width="280" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="db_gov" value="GOALS (GOAL_ID PK)&#xa;METRIC, TARGET_VALUE, FREQUENCY&#xa;ASSIGNED_TO_OPR, ASSIGNED_TO_ACT&#xa;STATUS, SUGGESTED_BY&#xa;---&#xa;RULES (RULE_ID PK)&#xa;TYPE, METRIC, LIMIT_VALUE&#xa;TIME_WINDOW_SEC, SEVERITY" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" parent="layer_db" vertex="1">
+                    <mxGeometry x="60" y="1080" width="280" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="note_gov" value="GOALS &amp; RULES tables defined in schema.dbml&#xa;/governance page planned for future&#xa;Goal metrics: Messages | Profiles | Replies | Warm | Bookings | Payments&#xa;Rule types: Frequency Cap | Interval Spacing" style="text;html=1;strokeColor=#9673a6;fillColor=#e1d5e7;align=center;verticalAlign=middle;rounded=1;fontSize=9;" vertex="1" parent="layer_db">
+                    <mxGeometry x="40" y="1250" width="320" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="note_sync" value="Data synced from Desktop Ecosystem&#xa;(Chrome Ext -&gt; Python Bridge -&gt; SQLite -&gt; Oracle)&#xa;See Page-1 for full sync flow" style="text;html=1;strokeColor=#6c8ebf;fillColor=#dae8fc;align=center;verticalAlign=middle;rounded=1;fontSize=9;" vertex="1" parent="layer_db">
+                    <mxGeometry x="40" y="230" width="320" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="f1" parent="arch1" source="page_dash" target="fn_stats" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f1b" edge="1" parent="arch1" source="page_dash" target="fn_metrics">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f2" parent="arch1" source="page_dash" target="fn_feed" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f3" parent="arch1" source="fn_stats" target="db_aggs" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f3b" edge="1" parent="arch1" source="fn_metrics" target="db_aggs">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_ana1" parent="arch1" source="page_analytics" target="fn_volume" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_ana1b" edge="1" parent="arch1" source="page_analytics" target="fn_heatmap">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_ana1c" edge="1" parent="arch1" source="page_analytics" target="fn_leaderboard">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_ana1d" edge="1" parent="arch1" source="page_analytics" target="fn_enrichment">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_ana2" parent="arch1" source="fn_volume" target="db_trends" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_lead1" parent="arch1" source="page_leads" target="fn_leads" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_lead1b" edge="1" parent="arch1" source="page_leads" target="fn_status_dist">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_lead3" parent="arch1" source="fn_leads" target="db_targets" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_act1" parent="arch1" source="page_actors" target="fn_actors" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_act1b" edge="1" parent="arch1" source="page_actors" target="fn_top_actors">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_act2" parent="arch1" source="fn_actors" target="db_actors" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_log1" parent="arch1" source="page_logs" target="fn_logs" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_log2" parent="arch1" source="fn_logs" target="db_logs" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f_set1" edge="1" parent="arch1" source="page_settings" target="fn_op_stats">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

@@ -5,12 +5,20 @@ This is the single source of truth for the application version.
 Imported by: launcher.py, dev_cli.py, and the main application.
 """
 
+import os
+import sys
+
 __version__ = "1.0.0"
 __app_name__ = "Insta Outreach Logger (Remastered)"
 
 # GitHub repository for auto-update checks
 GITHUB_OWNER = "hashaam101"
 GITHUB_REPO = "Insta-Outreach-Logger-Remastered"
+
+# Paths
+DOCUMENTS_DIR = os.path.join(os.path.expanduser('~'), 'Documents')
+APP_DIR_NAME = "Insta Outreach Logger" # Use this for file system folders
+LOG_DIR = os.path.join(DOCUMENTS_DIR, APP_DIR_NAME, 'logs')
 
 
 def get_version_tuple():

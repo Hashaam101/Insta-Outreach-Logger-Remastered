@@ -315,12 +315,12 @@ async function showStatusBanner(state, data = {}) {
         ];
     } else {
         statusOptions = [
-            { label: 'Cold NoReply', value: 'Cold_NoReply' },
-            { label: 'Rejected', value: 'Rejected' },
+            { label: 'Cold No Reply', value: 'Cold No Reply' },
+            { label: 'Replied', value: 'Replied' },
             { label: 'Warm', value: 'Warm' },
-            { label: 'Hot', value: 'Hot' },
             { label: 'Booked', value: 'Booked' },
-            { label: 'Client', value: 'Client' },
+            { label: 'Paid', value: 'Paid' },
+            { label: 'Tableturnerr Client', value: 'Tableturnerr Client' },
             { label: 'Excluded', value: 'Excluded' },
             { 
                 label: isContacted ? 'Mark as Not Contacted' : 'Mark as Contacted Manually', 

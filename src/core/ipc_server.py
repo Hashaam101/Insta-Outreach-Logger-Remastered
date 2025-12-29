@@ -1,8 +1,12 @@
 """
-IPC Server for Insta Outreach Logger.
+IPC Server for InstaCRM Ecosystem.
 This is the "Main Process" of the application backend. It runs continuously
 in the background, listening for data from Chrome Extension instances.
 It is responsible for establishing the OPERATOR identity for the device.
+
+Updated for Phase 4: Event Logs & Pre-Flight Checks
+Updated for Phase 2: Session State & Active Actor Tracking
+Updated for Feature: Auto Tab Switcher
 """
 
 import socket
@@ -11,7 +15,9 @@ import json
 import traceback
 import os
 import sys
+import time
 from datetime import datetime, timezone
+import pyautogui
 
 # Add the current directory to path for sibling imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -19,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from local_db import LocalDatabase
 from sync_engine import SyncEngine
 from contact_discovery import ContactDiscoverer
+from security import PreFlightChecker
 from ipc_protocol import (
     PORT,
     AUTH_KEY,
@@ -38,7 +45,7 @@ else:
     PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
 
 OPERATOR_CONFIG_PATH = os.path.join(PROJECT_ROOT, 'operator_config.json')
-
+USER_PREFS_PATH = os.path.join(PROJECT_ROOT, 'user_preferences.json')
 
 class IPCServer:
     """
@@ -50,8 +57,20 @@ class IPCServer:
         """Initialize the IPC Server, LocalDatabase, SyncEngine, and Operator identity."""
         self.operator_name = self._load_or_prompt_operator()
         self.db = LocalDatabase()
-        # Pass operator name to SyncEngine for auto-discovery, and register broadcast callback
+        self.checker = PreFlightChecker(self.db)
+        
+        # Session State for Heartbeats
+        self.session_state = {
+            "last_active_actor": None,
+            "last_activity_ts": datetime.now(timezone.utc)
+        }
+        
+        # Auto Switch State
+        self.session_outreach_count = 0
+        
+        # Pass server reference to SyncEngine so it can read session_state
         self.sync_engine = SyncEngine(
+            server_ref=self,
             operator_name=self.operator_name, 
             sync_interval=60,
             on_update_callback=self.broadcast_sync_event
@@ -59,7 +78,6 @@ class IPCServer:
         self.server_socket = None
         self.running = False
         self._lock = threading.Lock()
-        self.oracle_check_cache = {} # Negative cache for Oracle lookups: {username: timestamp_iso}
         
         # Client management for broadcasting
         self.active_clients = {} # {client_id: {'socket': sock, 'lock': threading.Lock()}}
@@ -83,6 +101,44 @@ class IPCServer:
 
         # If file doesn't exist, is invalid, or name is missing, we cannot continue in CLI mode.
         raise RuntimeError("Operator identity not established. Please run the Setup Wizard.")
+
+    def _load_user_prefs(self):
+        if os.path.exists(USER_PREFS_PATH):
+            try:
+                with open(USER_PREFS_PATH, 'r') as f:
+                    return json.load(f)
+            except: pass
+        return {}
+
+    def _trigger_auto_switch(self, delay: float):
+        """Executes the Auto Tab Switch logic in a thread."""
+        import ctypes
+        try:
+            time.sleep(delay)
+            
+            # Safety Check: Is Chrome/Instagram active?
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            buff = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+            title = buff.value
+            
+            if "Chrome" not in title and "Instagram" not in title:
+                print(f"[Auto] Skipped: Chrome not in focus (Active: {title})")
+                return
+
+            print("[Auto] Triggering Tab Switch (Ctrl+W -> Ctrl+Tab)...")
+            pyautogui.hotkey('ctrl', 'w')
+            time.sleep(0.3)
+            pyautogui.hotkey('ctrl', 'tab')
+        except Exception as e:
+            print(f"[Auto] Error in auto switch: {e}")
+
+    def _update_active_actor(self, actor_handle: str):
+        """Updates the session state with the currently active actor."""
+        if actor_handle:
+            self.session_state["last_active_actor"] = actor_handle
+            self.session_state["last_activity_ts"] = datetime.now(timezone.utc)
 
     def _register_client(self, client_id, client_socket):
         with self.clients_lock:
@@ -112,44 +168,39 @@ class IPCServer:
                     return False
         return False
 
-    def broadcast_sync_event(self):
+    def broadcast_sync_event(self, success=True):
         """
-        Called by SyncEngine when new data is pulled.
-        Broadcasts a 'SYNC_COMPLETED' message to all connected clients.
+        Called by SyncEngine when sync cycle completes.
+        Broadcasts a 'SYNC_COMPLETED' message to all clients if successful.
         """
-        print("[IPC] Broadcasting SYNC_COMPLETED to all clients...")
-        msg = {"type": "SYNC_COMPLETED"}
-        
-        # Snapshot keys to avoid holding lock during iteration
-        with self.clients_lock:
-            client_ids = list(self.active_clients.keys())
+        if success:
+            print("[IPC] Broadcasting SYNC_COMPLETED to all clients...")
+            print("[SYNC] Status: OK")
+            msg = {"type": "SYNC_COMPLETED"}
             
-        for cid in client_ids:
-            self._send_to_client(cid, msg)
+            # Snapshot keys to avoid holding lock during iteration
+            with self.clients_lock:
+                client_ids = list(self.active_clients.keys())
+                
+            for cid in client_ids:
+                self._send_to_client(cid, msg)
+        else:
+            print("[SYNC] Status: Error")
 
     def _run_background_discovery(self, profile_id, profile_data):
-        """
-        Runs the Contact Discovery module in a background thread.
-        """
+        """Runs the Contact Discovery module in a background thread."""
         try:
             discoverer = ContactDiscoverer()
             print(f"[Discovery] Starting background discovery for {profile_id}...")
+            
             result = discoverer.process_profile(profile_data)
             
             if result and (result.get('email') or result.get('phone_number')):
                 print(f"[Discovery] Found contact info for {profile_id}: {result}")
-                # Use lock to access the shared db connection
-                with self._lock:
-                    self.db.update_prospect_contact_info(
-                        profile_id, 
-                        result.get('email'), 
-                        result.get('phone_number'), 
-                        result.get('source')
-                    )
+                # Placeholder for writing discovery results to DB
+                # self.db.update_prospect_contact_info(profile_id, ...)
             else:
                 print(f"[Discovery] No contact info found for {profile_id}.")
-                with self._lock:
-                    self.db.set_discovery_complete(profile_id)
         except Exception as e:
             print(f"[Discovery] Error processing {profile_id}: {e}")
             traceback.print_exc()
@@ -170,7 +221,6 @@ class IPCServer:
                         print(f"[IPC] Client {client_id} disconnected cleanly")
                         break
                     response = self._process_message(msg, client_id)
-                    # Use thread-safe sender
                     self._send_to_client(client_id, response)
                 except TimeoutError:
                     continue
@@ -187,7 +237,6 @@ class IPCServer:
             print(f"[IPC] Client {client_id} handler terminated")
 
     def _authenticate_client(self, client_socket: socket.socket, client_id: str) -> bool:
-        # (Authentication logic remains the same)
         try:
             auth_msg = recv_msg(client_socket, timeout=10.0)
             if not auth_msg or auth_msg.get("action") != MessageType.AUTH or auth_msg.get("key", "") != AUTH_KEY.decode("utf-8"):
@@ -203,7 +252,13 @@ class IPCServer:
 
     def _process_message(self, msg: dict, client_id: str) -> dict:
         msg_type = msg.get("type") or msg.get("action", "").upper()
-        request_id = msg.get("requestId")  # For response routing
+        request_id = msg.get("requestId")
+
+        # Global Session Activity Update
+        # If the message contains an 'actor', we update our session tracking
+        payload = msg.get("payload", msg)
+        if isinstance(payload, dict) and payload.get("actor"):
+            self._update_active_actor(payload.get("actor"))
 
         if msg_type == "LOG_OUTREACH":
             response = self._handle_log_outreach(msg, client_id)
@@ -211,213 +266,178 @@ class IPCServer:
             response = self._handle_check_prospect_status(msg, client_id)
         elif msg_type == "UPDATE_PROSPECT_STATUS":
             response = self._handle_update_prospect_status(msg, client_id)
-        elif msg_type == "DELETE_PROSPECT":
-            response = self._handle_delete_prospect(msg, client_id)
-        elif msg_type == "GET_ALL_ACTORS":
-            response = self._handle_get_all_actors(msg, client_id)
         elif msg_type == "PING":
             response = {"status": "ok", "type": "PONG"}
         else:
             response = create_error_response(f"Unknown message type: {msg_type}")
 
-        # Include requestId in response for routing
         if request_id:
             response["requestId"] = request_id
         return response
 
     def _handle_log_outreach(self, msg: dict, client_id: str) -> dict:
         """
-        Handle LOG_OUTREACH message, enrich it with operator/actor data, and
-        save it to the local DB queue.
+        Handle LOG_OUTREACH message.
+        1. Perform Pre-Flight Safety Checks.
+        2. Log Event to Local DB.
+        3. Check Auto Tab Switcher Trigger.
         """
         try:
             payload = msg.get("payload", msg)
             target = payload.get("target")
-            actor = payload.get("actor") # Actor is now sent from the extension
-            print(f"[Debug] Log Outreach received for {target}")
+            actor = payload.get("actor")
             message = payload.get("message", "")
-            custom_ts = payload.get("timestamp") # Optional custom timestamp for manual logs
+            
+            act_id = actor # Temp: Use username as ID locally until sync resolves it
+            opr_id = self.operator_name # Temp
 
             if not target or not actor:
-                return create_error_response("Missing 'target' or 'actor' in LOG_OUTREACH")
+                return create_error_response("Missing 'target' or 'actor'")
 
-            # Check if prospect is excluded (ignore if this is a manual override log)
-            if not custom_ts:
-                with self._lock:
-                    local_prospect = self.db.get_prospect(target)
-                
-                if local_prospect and local_prospect.get('status') == 'Excluded':
-                    print(f"[IPC] Skipping log for EXCLUDED prospect: {target}")
-                    return create_ack_response(False, {"message": "Prospect is excluded from logging", "is_excluded": True})
+            # --- 1. PRE-FLIGHT CHECK ---
+            with self._lock:
+                safety_check = self.checker.check_safety_rules(act_id, opr_id)
+            
+            if not safety_check['allowed']:
+                return create_error_response(f"Blocked: {safety_check['message']}")
 
-            # Enrich the log with the Operator's identity
-            enriched_log = {
+            # --- 2. LOG EVENT ---
+            log_data = {
                 "target_username": target,
                 "actor_username": actor,
-                "message_snippet": message,
-                "operator_name": self.operator_name, # Inject the Operator
-                "timestamp": custom_ts if custom_ts else datetime.now(timezone.utc).isoformat()
+                "message_text": message,
+                "operator_name": self.operator_name,
+                "act_id": act_id,
+                "opr_id": opr_id,
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
 
-            # If manual log, format the snippet as requested
-            if custom_ts:
-                # We need to know the old status. For simplicity, we assume 'Not Contacted' if it's a manual contact log
-                # but we can try to be more precise if we had the status in payload.
-                # For now, let's use the format suggested.
-                enriched_log["message_snippet"] = f"[Manual Change: Not Contacted -> Contacted] {message}"
-
-            # Thread-safe write to the local database queue
             with self._lock:
-                log_id = self.db.log_outreach(enriched_log)
+                # Privacy Check: Don't log messages for Paid/Clients/Excluded
+                prospect = self.db.get_prospect(target)
+                current_status = prospect.get('status') if prospect else 'new'
+                if current_status in ['Excluded', 'Tableturnerr Client', 'Paid']:
+                    print(f"[IPC] Protected status '{current_status}' detected. Message text will not be logged.")
+                    log_data['message_text'] = None
+                
+                log_id = self.db.log_event('Outreach', log_data)
+                
+                # Increment Session Count
+                self.session_outreach_count += 1
 
-            # Trigger Background Discovery
-            # Extract profile_data from payload (sent by extension)
+            # --- 3. AUTO SWITCHER CHECK ---
+            prefs = self._load_user_prefs()
+            if prefs.get('auto_tab_switch', False):
+                freq = prefs.get('tab_switch_frequency', 1)
+                delay = prefs.get('tab_switch_delay', 2.0)
+                
+                if self.session_outreach_count % freq == 0:
+                    threading.Thread(target=self._trigger_auto_switch, args=(delay,), daemon=True).start()
+
+            # Trigger background discovery
             raw_profile_data = payload.get("profile_data", {})
-            print(f"[Discovery] Received Profile Content: {raw_profile_data}")
-            
-            # Construct discovery_data using scraped info
-            discovery_data = {
-                "target_username": target,
-                "name": raw_profile_data.get("fullName"),
-                "bio_link": raw_profile_data.get("externalLink"),
-                "biography": raw_profile_data.get("bio")
-            }
-            
-            print(f"[Debug] Spawning discovery thread for {target} with data keys: {list(discovery_data.keys())}")
-            threading.Thread(
-                target=self._run_background_discovery, 
-                args=(target, discovery_data), 
-                daemon=True
-            ).start()
+            if raw_profile_data:
+                discovery_data = {
+                    "target_username": target,
+                    "name": raw_profile_data.get("fullName"),
+                    "bio_link": raw_profile_data.get("externalLink"),
+                    "biography": raw_profile_data.get("bio")
+                }
+                threading.Thread(
+                    target=self._run_background_discovery, 
+                    args=(target, discovery_data), 
+                    daemon=True
+                ).start()
 
-            print(f"[IPC] Queued outreach from Operator '{self.operator_name}' via Actor '{actor}': to {target} (Manual: {bool(custom_ts)})")
-            return create_ack_response(True, {"log_id": log_id})
+            response_data = {"log_id": log_id}
+            if safety_check['status'] == 'WARN':
+                response_data['warning'] = safety_check['message']
+                
+            return create_ack_response(True, response_data)
 
         except Exception as e:
             print(f"[IPC] Error logging outreach: {e}")
             traceback.print_exc()
             return create_error_response(f"Database error: {e}")
 
-    def _handle_delete_prospect(self, msg: dict, client_id: str) -> dict:
-        """Removes prospect locally and queues for cloud removal."""
-        try:
-            payload = msg.get("payload", msg)
-            target = payload.get("target")
-            if not target: return create_error_response("Missing target")
-            
-            print(f"[IPC] Deletion requested for {target}")
-            with self._lock:
-                self.db.delete_prospect_local(target)
-            return create_ack_response(True, {"success": True})
-        except Exception as e:
-            return create_error_response(str(e))
-
-    def _handle_get_all_actors(self, msg: dict, client_id: str) -> dict:
-        """Returns list of all unique actors from local DB cache."""
-        try:
-            with self._lock:
-                actors = self.db.get_unique_actors()
-            return create_ack_response(True, {"actors": actors})
-        except Exception as e:
-            return create_error_response(str(e))
-
     def _handle_check_prospect_status(self, msg: dict, client_id: str) -> dict:
-        """
-        Handle CHECK_PROSPECT_STATUS message. Checks local DB ONLY.
-        Background sync thread ensures local DB is up to date with Oracle.
-        """
+        """Handle CHECK_PROSPECT_STATUS message."""
         try:
             payload = msg.get("payload", msg)
             target = payload.get("target")
 
             if not target:
-                return create_error_response("Missing 'target' in CHECK_PROSPECT_STATUS")
+                return create_error_response("Missing 'target'")
 
-            print(f"[IPC] Checking local prospect status for: {target}")
-
-            # Query local SQLite database
             with self._lock:
                 local_prospect = self.db.get_prospect(target)
 
             if local_prospect:
-                print(f"[IPC] Local HIT for {target}: {local_prospect.get('status')}")
                 return create_ack_response(True, {
                     "contacted": True,
-                    "status": local_prospect.get("status", "Cold_NoReply"),
+                    "status": local_prospect.get("status", "Cold No Reply"),
                     "owner_actor": local_prospect.get("owner_actor"),
                     "last_updated": local_prospect.get("last_updated"),
                     "notes": local_prospect.get("notes"),
                     "source": "local"
                 })
 
-            print(f"[IPC] Local MISS for {target} - assuming not contacted")
             return create_ack_response(True, {
                 "contacted": False,
                 "source": "local_miss"
             })
 
         except Exception as e:
-            print(f"[IPC] Error checking local prospect status: {e}")
             return create_error_response(f"Local DB error: {e}")
 
     def _handle_update_prospect_status(self, msg: dict, client_id: str) -> dict:
-        """
-        Handle UPDATE_PROSPECT_STATUS message. Updates the prospect's status
-        in local DB and logs the event. SyncEngine will push to Oracle in the next cycle.
-        """
+        """Handle UPDATE_PROSPECT_STATUS message."""
         try:
             payload = msg.get("payload", msg)
             target = payload.get("target")
             new_status = payload.get("new_status")
             actor = payload.get("actor", "unknown_actor")
-            notes = payload.get("notes")
 
             if not target or not new_status:
-                return create_error_response("Missing 'target' or 'new_status' in UPDATE_PROSPECT_STATUS")
+                return create_error_response("Missing 'target' or 'new_status'")
 
-            # Get the old status for logging
-            with self._lock:
-                old_prospect = self.db.get_prospect(target)
-            old_status = old_prospect.get("status", "New") if old_prospect else "New"
+            # Determine Event Type and Message
+            protected_statuses = ['Excluded', 'Tableturnerr Client', 'Paid']
+            
+            if new_status == 'Excluded':
+                event_type = 'Tar Exception Toggle'
+                message_text = None 
+                details = json.dumps({'target_username': target, 'status_change': 'Excluded'})
+            elif new_status in protected_statuses:
+                event_type = 'Change in Tar Info'
+                message_text = None 
+                details = json.dumps({'target_username': target, 'status_change': new_status})
+            else:
+                event_type = 'Change in Tar Info'
+                message_text = f"Status updated to: {new_status}" # Log text for non-protected
+                details = json.dumps({'target_username': target, 'status_change': new_status})
 
-            print(f"[IPC] Updating local status: {target} ({old_status} -> {new_status})")
-
-            # 1. Update local SQLite database
-            with self._lock:
-                self.db.update_prospect_status(target, new_status, notes=notes)
-
-            # 2. Log the status change event (This triggers SyncEngine to push the new state to Oracle)
-            status_change_log = {
+            log_data = {
                 "target_username": target,
                 "actor_username": actor,
-                "message_snippet": f"[Status: {old_status} -> {new_status}]" + (f" [Note: {notes}]" if notes else ""),
-                "operator_name": self.operator_name
+                "message_text": message_text,
+                "operator_name": self.operator_name,
+                "act_id": actor, # Temp
+                "opr_id": self.operator_name, # Temp
+                "details": details,
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
+
             with self._lock:
-                self.db.log_outreach(status_change_log)
+                # Update local cache first
+                self.db.update_prospect_status(target, new_status)
+                # Log the event
+                self.db.log_event(event_type, log_data)
 
-            # Trigger Background Discovery (for manual status changes)
-            raw_profile_data = payload.get("profile_data", {})
-            print(f"[Discovery] Received Profile Content: {raw_profile_data}")
-
-            discovery_data = {
-                "target_username": target,
-                "name": raw_profile_data.get("fullName"),
-                "bio_link": raw_profile_data.get("externalLink"),
-                "biography": raw_profile_data.get("bio")
-            }
-            threading.Thread(
-                target=self._run_background_discovery, 
-                args=(target, discovery_data), 
-                daemon=True
-            ).start()
-
-            print(f"[IPC] Local update complete. Change queued for cloud sync.")
             return create_ack_response(True, {"success": True})
 
         except Exception as e:
-            print(f"[IPC] Error during local status update: {e}")
-            return create_error_response(f"Local update failed: {e}")
+            return create_error_response(f"Update failed: {e}")
 
     def start(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -426,8 +446,8 @@ class IPCServer:
             self.server_socket.bind(("127.0.0.1", PORT))
             self.server_socket.listen(5)
             self.running = True
-            self.sync_engine.start()
-            print(f"[IPC] Insta Outreach Logger IPC Server running on port {PORT}...")
+            self.sync_engine.start() # Start SyncEngine
+            print(f"[IPC] InstaCRM IPC Server running on port {PORT}...")
             while self.running:
                 try:
                     client_socket, client_addr = self.server_socket.accept()
@@ -453,7 +473,7 @@ class IPCServer:
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("  Insta Outreach Logger (Remastered) - IPC Server")
+    print("  InstaCRM Ecosystem - IPC Server")
     print("=" * 50)
     server = IPCServer()
     try:

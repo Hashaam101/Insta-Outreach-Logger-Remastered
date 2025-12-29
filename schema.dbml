@@ -1,0 +1,186 @@
+// ==========================================
+// ==========================================
+//           SYSTEM CONFIGURATION
+// ==========================================
+// ==========================================
+
+// TIMEZONE PROTOCOL:
+// - Database (Oracle ATP) is strictly GMT+0 (UTC).
+// - All TIMESTAMP columns must store UTC time only.
+// - Use SYSTIMESTAMP or SYSDATE for DB-generated times.
+// - Application Layer: All JS Date objects must be converted to UTC before DB interaction.
+// - UI Layer: Conversion to User's Local Time (e.g., GMT+5) must happen at the edge (last layer of rendering).
+
+// ==========================================
+// ==========================================
+//           ENUMERATIONS (ENUMS)
+// ==========================================
+// ==========================================
+
+Enum "act_status" {
+    "Active"
+    "Suspended By Team"
+    "Suspended By Insta"
+    "Discarded"
+}
+Enum "elog_type" {
+    "Outreach"
+    "Change in Tar Info"
+    "Tar Exception Toggle"
+    "User"
+    "System"
+}
+Enum "opr_status" {
+    "online"
+    "offline"
+}
+Enum "tar_status" {
+    "Cold No Reply"
+    "Replied"
+    "Warm"
+    "Booked"
+    "Paid"
+    "Tableturnerr Client"
+    "Excluded"
+}
+Enum "goal_frequency" {
+    "Daily"
+    "Monthly"
+}
+Enum "goal_metric" {
+    "Total Messages Sent"
+    "Unique Profiles Contacted"
+    "Replies Received"
+    "Warm Leads Generated"
+    "Bookings Made"
+    "Payments Received"
+}
+Enum "goal_status" {
+    "Active"
+    "Pending Suggestion"
+    "Rejected"
+    "Archived"
+}
+Enum "rule_type" {
+    "Frequency Cap"
+    "Interval Spacing"
+}
+
+// ==========================================
+// ==========================================
+//           CORE ENTITIES
+// ==========================================
+// ==========================================
+Table "OPERATORS" {
+  "OPR_ID" varchar(8) [pk, not null, note: 'Format: OPR-A1DC2A4B (Prefix + CAPS Hex).', ref: < "EVENT_LOGS"."OPR_ID"]
+  "OPR_EMAIL" varchar(255) [unique, not null]
+  "OPR_NAME" varchar(32) [unique, not null]
+  "OPR_STATUS" opr_status [not null]
+  "CREATED_AT" TIMESTAMP [not null]
+  "LAST_ACTIVITY" TIMESTAMP [not null, note: 'Should be same as Created_At if no activity is visible in logs.']
+  Note: 'If multiple operator then in instances where total performance of an actor is fetched the total performance from all operators (made on this actor) should be shown but if team performance is fetched then these actors should be considered as seperate as they have seperate operators/owners.'
+}
+Table "ACTORS" {
+  // Ownership Logic
+  "ACT_ID" varchar(8) [pk, not null, note: 'Format: ACT-A1DC2A4B (Prefix + CAPS Hex).']
+  "ACT_USERNAME" varchar(32) [not null]
+  "OPR_ID" varchar(8) [not null, note: 'Re-added to satisfy Ownership logic in Operator Note.', ref: < "OPERATORS"."OPR_ID"]
+  "ACT_STATUS" act_status [not null]
+  "CREATED_AT" TIMESTAMP [not null]
+  "LAST_ACTIVITY" TIMESTAMP [not null, note: 'Should be same as Created_At if no activity is visible in logs.']
+  
+  Indexes {
+    (ACT_USERNAME, OPR_ID) [unique]
+  }
+}
+Table "TARGETS" {
+  // Contact Info
+  "TAR_ID" varchar(8) [pk, not null, note: 'Format: TAR-A1dC2h4B (Prefix + Mixed Case Hex).', ref: < "EVENT_LOGS"."TAR_ID"]
+  "TAR_USERNAME" varchar(32) [unique, not null]
+  "TAR_STATUS" tar_status [not null]
+  "FIRST_CONTACTED" TIMESTAMP [not null]
+  "NOTES" text [not null, default: 'N/A']
+  "LAST_UPDATED" TIMESTAMP [not null]
+  "EMAIL" varchar(500) [not null, default: 'N/S', note: 'N/S = Not Searched. N/F = Not Found.']
+  "PHONE_NUM" varchar(500) [not null, default: 'N/S', note: 'N/S = Not Searched. N/F = Not Found.']
+  "CONT_SOURCE" text [not null, default: 'N/S', note: 'N/F if EMAIL/PHONE both not found.']
+  Note: '''Targets are shared entities. While we prefer 1:1 ownership, the schema allows multiple Actors to log events against the same Target ID. \'Unique Profiles Contacted\' counts should be derived from distinct TAR_IDs in EVENT_LOGS.'''
+}
+// ==========================================
+// ==========================================
+//           LOGGING SYSTEM
+// ==========================================
+// ==========================================
+Table "EVENT_LOGS" {
+  // Foreign Keys (Context)
+  "ELG_ID" varchar(10) [pk, not null, note: 'Format: ELG-A1dC2h4Bw8. Parent ID for all event types.', ref: < "OUTREACH_LOGS"."ELG_ID"]
+  "EVENT_TYPE" elog_type [not null]
+  "ACT_ID" varchar(8) [not null, ref: < "ACTORS"."ACT_ID"]
+  "OPR_ID" varchar(8) [not null]
+  "TAR_ID" varchar(8) [not null]
+  "DETAILS" text [note: 'Context varies by Type. E.g., Status Change = [Status: old -> new]. Toggle = [Exception: Added].']
+  "CREATED_AT" TIMESTAMP [not null]
+}
+Table "OUTREACH_LOGS" {
+  // 1:1 Relationship (Child extension of Event Logs)
+  "OLG_ID" varchar(10) [pk, not null, note: 'Format: OLG-A1dC2h4Bw8.']
+  "ELG_ID" varchar(10) [unique, not null]
+  "MESSAGE_TEXT" text [not null]
+  "SENT_AT" TIMESTAMP [not null, note: 'Actual message timestamp. May differ from ELG CREATED_AT during sync/import.']
+}
+// ==========================================
+// ==========================================
+//           GOALS & METRICS
+// ==========================================
+// ==========================================
+Table "GOALS" {
+  // ------------------------------------
+  // CONFIGURATION
+  // ------------------------------------
+  // ------------------------------------
+  // SCOPE & ASSIGNMENT
+  // ------------------------------------
+  // ------------------------------------
+  // SUGGESTION LOGIC
+  // ------------------------------------
+  "GOAL_ID" varchar(10) [pk, not null, note: 'Format: GOL-A1B2C3D4']
+  "METRIC" goal_metric [not null]
+  "TARGET_VALUE" integer [not null, note: 'The numeric target (e.g., 1000 messages).']
+  "FREQUENCY" goal_frequency [not null]
+  "ASSIGNED_TO_OPR" varchar(8) [note: 'The Operator this goal applies to. If NULL, applies to WHOLE TEAM.', ref: < "OPERATORS"."OPR_ID"]
+  "ASSIGNED_TO_ACT" varchar(8) [note: 'Optional. If Set, goal is specific to this Actor. If NULL, applies to all Actors owned by the Operator.', ref: < "ACTORS"."ACT_ID"]
+  "STATUS" goal_status [not null, default: `Active`]
+  "SUGGESTED_BY" varchar(8) [note: 'The Teammate who suggested this. If same as ASSIGNED_TO, it is a self-set Personal Goal.', ref: < "OPERATORS"."OPR_ID"]
+  "CREATED_AT" TIMESTAMP [not null]
+  "START_DATE" TIMESTAMP [not null, note: 'When does tracking start?']
+  "END_DATE" TIMESTAMP [note: 'Optional. For Monthly goals, this defines the month boundary.']
+  Note: '''Logic for Shared Actors: If ASSIGNED_TO_ACT is set for a shared actor, the \'Progress\' is the COLLECTIVE BUCKET (Sum of all events on that Actor). The App layer should calculate \'My Contribution\' by filtering those events by the current Operator ID.'''
+}
+// ==========================================
+// ==========================================
+//           RULES & LIMITS
+// ==========================================
+// ==========================================
+Table "RULES" {
+  // ------------------------------------
+  // CONFIGURATION
+  // ------------------------------------
+  // ------------------------------------
+  // SCOPE & ASSIGNMENT
+  // ------------------------------------
+  // ------------------------------------
+  // SUGGESTION LOGIC
+  // ------------------------------------
+  "RULE_ID" varchar(10) [pk, not null, note: 'Format: RUL-X9Y8Z7W6']
+  "TYPE" rule_type [not null, note: 'Defines how the Limit works (Batch Limit vs Safety Gap).']
+  "METRIC" goal_metric [not null, note: 'Usually Total Messages or Unique Profiles.']
+  "LIMIT_VALUE" integer [not null, note: 'The Threshold. E.g., 50 (messages) or 300 (seconds).']
+  "TIME_WINDOW_SEC" integer [not null, note: 'The Duration in seconds. E.g., 3600 for Per Hour. Ignored for Interval Spacing if LIMIT_VALUE acts as the gap.']
+  "SEVERITY" text [default: 'Soft Warning', note: 'All rules are soft alerts per requirements.']
+  "ASSIGNED_TO_OPR" varchar(8) [note: 'Who must obey this rule? NULL = Team Wide Rule.', ref: < "OPERATORS"."OPR_ID"]
+  "ASSIGNED_TO_ACT" varchar(8) [note: 'Specific Actor restriction. NULL = All Actors.', ref: < "ACTORS"."ACT_ID"]
+  "STATUS" goal_status [not null, default: `Active`, note: 'Uses same status enum to handle Suggested Rules.']
+  "SUGGESTED_BY" varchar(8) [ref: < "OPERATORS"."OPR_ID"]
+  "CREATED_AT" TIMESTAMP [not null]
+  Note: '''Rules serve as \'Soft Warns\'. Application Logic: Frequency Cap = Count events in last TIME_WINDOW_SEC > LIMIT_VALUE. Interval Spacing = Time since last event < LIMIT_VALUE.'''
+}

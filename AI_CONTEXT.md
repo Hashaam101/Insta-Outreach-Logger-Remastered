@@ -2,122 +2,63 @@
 
 ## 📌 Project Identity
 
-- **Name**: Insta Outreach Logger (Remastered)
-- **Type**: Distributed Desktop Application + Chrome Extension
-- **Purpose**: A stealthy, local-first Instagram CRM designed for distributed outreach teams. It logs DM outreach and tracks prospect status without triggering Instagram's anti-bot detection mechanisms.
+- **Name**: InstaCRM Ecosystem (Desktop Agent + Dashboard)
+- **Type**: Distributed Desktop Application (Python/Chrome) + Cloud Dashboard (Next.js)
+- **Purpose**: A stealthy, local-first Instagram CRM designed for distributed outreach teams. It logs DM outreach and tracks prospect status without triggering Instagram's anti-bot detection mechanisms, governed by a central democratic policy system.
 
 ## 🏗️ System Architecture
 
-The application uses a hybrid auto-discovery model to establish identity and a "Stealth Bridge" to log data without being detected.
+The ecosystem allows multiple agents (Operators) to control multiple Instagram accounts (Actors) while syncing data to a central Cloud Core (Oracle ATP).
 
-### 1. Identity: The Auto-Discovery Workflow
+### 1. Identity: Google OAuth & Auto-Discovery
 
-Setup is fully automated. The identity of the human user (**Operator**) and the Instagram account being used (**Actor**) are discovered and persisted on first use.
+Setup is fully automated and secure. The identity of the human user (**Operator**) is established via Google Sign-In, linking them to the central dashboard.
 
 -   **Operator (The Human):** The identity of the team member.
-    1.  **First Run:** The backend Python server (`ipc_server.py`) starts.
-    2.  **Check/Prompt:** It looks for `operator_config.json`. If not found, it prompts the user in the console for their name (e.g., "John Smith").
-    3.  **Persistence:** The name is saved, establishing a persistent Operator identity for that device.
+    1.  **First Run:** The user launches the desktop app (`start_gui.py`).
+    2.  **Login:** The app prompts the user to "Sign in with Google". This uses OAuth 2.0 PKCE flow to authenticate against the central project credentials.
+    3.  **Verification:** The app checks if the email exists in the `OPERATORS` table.
+        *   **Found:** The session is authorized, and the dashboard launches.
+        *   **New User:** An "Establish Identity" form appears, allowing the user to set their `OPR_NAME` and register.
+    4.  **Persistence:** The authorized identity is saved locally (`operator_config.json`), allowing the background IPC server to run autonomously.
 
 -   **Actor (The Instagram Account):** The Instagram account sending the DMs.
-    1.  **First Install:** When the extension is installed or updated, the background script (`background.js`) checks its local storage for an `actorUsername`.
-    2.  **Discovery Tab:** If the username is missing, it opens a temporary tab to `instagram.com`.
-    3.  **Scrape & Save:** The content script (`content.js`) activates, finds the user's profile link in the navigation rail, scrapes the username, and sends it to the background script. The background script saves it to `chrome.storage.local` and closes the tab.
-    4.  **Hardened Detection:** If the user switches accounts (Single Page App navigation), a `MutationObserver` detects the profile change and re-scrapes the new Actor within 5 seconds.
+    1.  **Discovery:** When the extension is installed or the user switches accounts, the content script scrapes the current username.
+    2.  **Shared Ownership:** A single Actor (e.g., `@company_account`) can be managed by multiple Operators. The system tracks "My Contribution" vs. "Team Contribution" for shared assets.
 
-### 2. Data Logging: The "Stealth Bridge"
+### 2. Data Logging: The "Stealth Bridge" (Updated)
 
-This process ensures that no network requests are made from the browser, avoiding bot detection.
+This process ensures that no network requests are made from the browser to external APIs, avoiding bot detection.
 
-1.  **Message Sent (Browser):** The user sends a DM. The `content.js` script captures the `target` username, `message` text, and reads the `actor` username from storage.
-2.  **IPC Message (Browser -> Host):** The content script sends this data packet (`{actor, target, message}`) to the background script, which forwards it to the native Python host (`bridge.py` / `InstaLogger.exe --bridge`).
-3.  **Data Enrichment (Host):** The `ipc_server.py` receives the packet. It injects the `operator_name` from its config into the data.
-4.  **Local Queue (Host):** The fully enriched log (`{actor, operator, target, message}`) is saved into a local SQLite database (`local_data.db`). The response to the browser is immediate (0ms latency).
+1.  **Message Sent (Browser):** The user sends a DM. The `content.js` script captures the `target` username and `message` text.
+2.  **Pre-Flight Check (Local):** Before confirming, the local host checks the `RULES` table (e.g., "Max 50 DMs/hour").
+3.  **Resilient IPC:** The data is sent via Native Messaging to the Python Host. The bridge features **Auto-Reconnect** logic, ensuring communication remains active even if the desktop app is restarted.
+4.  **Event Logging (Host):** The `ipc_server.py` creates a structured record in the local SQLite DB.
+5.  **Response:** Immediate success/warning response to the browser.
+6.  **Automation (Optional):** If "Auto-Tab Switcher" is enabled, the host triggers a `Ctrl+W` / `Ctrl+Tab` key sequence. This includes a **Foreground Window Check** (via `ctypes`) to ensure keys are only sent if Chrome/Instagram is in active focus.
 
 ### 3. Sync Engine: "GitHub-Style" Delta Sync
 
 To keep bandwidth low and syncs fast, the system uses a **Last-Write-Wins** delta strategy.
 
-1.  **Local Meta Table:** The local SQLite DB has a `meta` table storing `last_cloud_sync` (timestamp).
-2.  **Pull (Cloud -> Local):**
-    -   The Sync Engine queries Oracle: `SELECT * FROM PROSPECTS WHERE LAST_UPDATED > :last_cloud_sync`.
-    -   Oracle returns *only* the rows that changed since the last sync.
-    -   Local DB bulk-upserts these changes.
-    -   Local `last_cloud_sync` is updated to `NOW()`.
-3.  **Push (Local -> Cloud):**
-    -   The Sync Engine reads all `outreach_logs` where `synced_to_cloud = 0`.
-    -   It bulk-inserts these logs into Oracle.
-    -   It bulk-upserts any new prospects/actors discovered.
-    -   It marks local logs as `synced_to_cloud = 1`.
+-   **Cloud Source:** Oracle Autonomous Database (ATP).
+-   **Local Cache:** SQLite with **Self-Healing Resilience**. The system maintains an auto-backup (`.bak`) and automatically restores data if corruption is detected.
+-   **Adaptive Sync:** Featuring **Exponential Backoff**, the engine reduces sync frequency during network outages to save resources.
 
-### 4. Real-Time Status Check (UI Notifications)
-
-When the user visits an Instagram profile page or opens a DM thread, the extension displays a visual status banner:
-
-1.  **Check Request:** The content script extracts the target username and sends a `CHECK_PROSPECT_STATUS` message via the native messaging bridge.
-2.  **Local Lookup:** The IPC Server checks the local SQLite database (which is kept up-to-date by the Sync Engine).
-3.  **Banner Display:**
-    -   **Green Banner:** "Not Contacted Before"
-    -   **Red Banner:** "Previously Contacted: [Status]" (e.g., Warm, Hot)
-    -   **Red Border:** "Detection Failed" (if username cannot be scraped)
-4.  **Status Dropdown:** Users can update the prospect's status directly from the banner. Changes are saved locally -> synced to Oracle.
-
----
-
-## 🖥️ Web Dashboard (Command Center)
-
-A separate, modern web application for centralized management and analytics.
-
--   **Tech Stack**: Next.js 14, Tailwind CSS, TypeScript.
--   **Repository**: [https://github.com/Hashaam101/insta-outreach-logger-dashboard](https://github.com/Hashaam101/insta-outreach-logger-dashboard)
--   **Functionality**:
-    -   **Analytics**: Visualizes team performance, outreach volume, and booking rates.
-    -   **Lead Management**: Grid view for filtering and updating prospect statuses.
-    -   **Operator Management**: Admin interface for managing team members and access.
-    -   **Authentication**: Google OAuth integration linked to Operator IDs.
-
----
-
-## 💾 Database Architectures
-
-### Local Database (SQLite)
-*Acts as a cache and offline queue.*
--   **`prospects`**: Local cache of lead status + `last_updated`.
--   **`outreach_logs`**: Append-only queue of sent messages (`synced_to_cloud` flag).
--   **`meta`**: Key-value store for config (e.g., `last_cloud_sync`).
-
-### Cloud Database (Oracle ATP)
-*The central source of truth.*
--   **`OPERATORS`**: List of human team members.
--   **`ACTORS`**: List of Instagram accounts (`OWNER_OPERATOR` FK).
--   **`PROSPECTS`**: Master list of leads (`LAST_UPDATED` timestamp for sync).
--   **`OUTREACH_LOGS`**: Global history of all messages.
+### 4. Democratic Governance & Rules
+... (rest remains similar) ...
 
 ---
 
 ## 📦 Distribution Architecture
 
-### 1. The Launcher (Bootstrapper)
-The entry point is `InstaLogger.exe` (renamed from launcher).
--   **GitHub Releases Integration:** On startup, it queries the GitHub Releases API.
--   **Auto-Update:** If a newer version is available, it downloads and swaps the binary automatically.
--   **Execution:** Once the environment is verified, it launches the main application (`ipc_server`).
+### 1. The Launcher (`InstaLogger.exe`)
+-   Auto-updates the binary from GitHub Releases on every launch.
+-   Self-Heals: Dynamically registers the Native Messaging Host paths in the Windows Registry.
+-   Configuration: Prompts for the Update Source URL if missing or invalid.
 
-### 2. Setup Wizard (First Run)
-If credentials are missing (`local_config.py` or `assets/wallet/`), the **Setup Wizard** launches.
--   **Setup Pack:** User drags a `Setup_Pack.zip` (provided by admin) into the window.
--   **Automation:** The wizard extracts credentials and registers the Native Messaging Host in the Windows Registry (`HKCU\Software\Google\Chrome\NativeMessagingHosts`).
-
----
-
-## 🗓️ Development Status
-
-All major development phases are complete. The application is a functional end-to-end system ready for deployment.
-
--   **Phase 1: Foundation & Backend Logic:** Complete (Oracle migration).
--   **Phase 2: Chrome Extension & Bridge:** Complete (Hardened v12).
--   **Phase 3: Admin Command Center:** Complete (Migrated to separate [Next.js Dashboard repo](https://github.com/Hashaam101/insta-outreach-logger-dashboard)).
--   **Phase 4: Auto-Discovery Architecture:** Complete.
--   **Phase 5: Real-Time Status Check:** Complete.
--   **Phase 6: Packaging & Distribution:** Complete (Dev CLI, Setup Wizard, Launcher).
--   **Phase 7: Optimization:** Complete (Delta Sync Engine).
+### 2. One-Click Installer (`installer_gui.py`)
+-   Deploys the entire environment to `Documents/Insta Outreach Logger`.
+-   Manages process lifecycles: Safely kills running instances during updates to avoid file locks.
+-   Creates system-wide shortcuts (Start Menu & Desktop).
+-   Registers the Chrome Extension path automatically.

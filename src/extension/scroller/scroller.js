@@ -47,6 +47,12 @@
         
         toggleBtn.addEventListener('click', togglePanel);
         document.body.appendChild(toggleBtn);
+        
+        // Add pulse animation on creation to draw attention
+        toggleBtn.classList.add('pulse-once');
+        setTimeout(() => {
+            if (toggleBtn) toggleBtn.classList.remove('pulse-once');
+        }, 3000);
     }
 
     function createPanel() {
@@ -277,14 +283,31 @@
         return scrollables[0];
     }
 
+    function showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `scroller-toast ${type}`;
+        toast.innerText = message;
+        document.body.appendChild(toast);
+        
+        // Trigger animation
+        setTimeout(() => toast.classList.add('visible'), 10);
+        
+        // Remove after 3s
+        setTimeout(() => {
+            toast.classList.remove('visible');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
     function startScrolling() {
         const container = findDMContainer();
         if (!container) {
-            alert('Could not find DM list. Please navigate to the Direct Messages inbox.');
+            showToast('Could not find DM list!', 'error');
             return;
         }
 
         console.log('[InstaLogger][Scroller] Starting scroll...');
+        showToast('Auto-Scroll Started', 'success');
         isScrolling = true;
         lastTickTime = Date.now();
         scrollAccumulator = 0;
@@ -302,6 +325,7 @@
 
     function stopScrolling() {
         console.log('[InstaLogger][Scroller] Stopping scroll...');
+        if (isScrolling) showToast('Auto-Scroll Stopped', 'info');
         isScrolling = false;
         if (scrollInterval) clearTimeout(scrollInterval);
         scrollInterval = null;

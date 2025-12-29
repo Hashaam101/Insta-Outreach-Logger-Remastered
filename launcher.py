@@ -15,6 +15,7 @@ Usage:
 import os
 import sys
 import json
+import re
 import urllib.request
 import urllib.error
 import tempfile
@@ -27,7 +28,9 @@ import time
 
 # --- Crash Log Setup ---
 # Log crashes to a file for debugging compiled exe issues
-if getattr(sys, 'frozen', False):
+if LOG_DIR:
+    CRASH_LOG_PATH = os.path.join(LOG_DIR, 'crash_log.txt')
+elif getattr(sys, 'frozen', False):
     CRASH_LOG_PATH = os.path.join(os.path.dirname(sys.executable), 'crash_log.txt')
 else:
     CRASH_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'crash_log.txt')
@@ -96,12 +99,13 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src', 'core'))
 
 # Import version info
 try:
-    from src.core.version import __version__, __app_name__, GITHUB_OWNER, GITHUB_REPO, compare_versions
+    from src.core.version import __version__, __app_name__, GITHUB_OWNER, GITHUB_REPO, compare_versions, LOG_DIR
 except ImportError:
     __version__ = "0.0.0"
     __app_name__ = "Insta Outreach Logger"
     GITHUB_OWNER = "hashaam101"
     GITHUB_REPO = "Insta-Outreach-Logger-Remastered"
+    LOG_DIR = None
 
     def compare_versions(v1, v2):
         v1_parts = [int(x) for x in v1.lstrip('v').split('.')]
@@ -124,6 +128,7 @@ class Launcher:
         self.debug = debug
         self.config_path = os.path.join(PROJECT_ROOT, 'local_config.py')
         self.wallet_path = os.path.join(PROJECT_ROOT, 'assets', 'wallet', 'cwallet.sso')
+        self.update_config_path = os.path.join(PROJECT_ROOT, 'update_config.json')
 
     def log(self, message, level="INFO"):
         """Print log message with level prefix."""
@@ -192,6 +197,83 @@ class Launcher:
             traceback.print_exc()
             return False
 
+    def get_github_config(self):
+        """
+        Retrieve GitHub Owner and Repo.
+        Priority:
+        1. Local 'update_config.json'
+        2. 'src.core.version' constants
+        3. User prompt (if both above are invalid/placeholders)
+        """
+        owner, repo = None, None
+
+        # 1. Try Local Config
+        if os.path.exists(self.update_config_path):
+            try:
+                with open(self.update_config_path, 'r') as f:
+                    data = json.load(f)
+                    owner = data.get('owner')
+                    repo = data.get('repo')
+            except Exception as e:
+                self.log(f"Error reading update config: {e}", "WARNING")
+
+        # 2. Try Version Module
+        if not owner or not repo:
+            if GITHUB_OWNER != "your-username" and GITHUB_REPO != "your-repo":
+                owner = GITHUB_OWNER
+                repo = GITHUB_REPO
+
+        # 3. Prompt if still missing or placeholder
+        if not owner or not repo or (owner == "hashaam101" and "PLACEHOLDER" in repo):
+             pass
+
+        if not owner or not repo:
+            self.log("GitHub configuration missing. Prompting user...")
+            owner, repo = self.prompt_github_url()
+            if owner and repo:
+                try:
+                    with open(self.update_config_path, 'w') as f:
+                        json.dump({'owner': owner, 'repo': repo}, f)
+                except Exception as e:
+                    self.log(f"Failed to save update config: {e}", "ERROR")
+        
+        return owner, repo
+
+    def prompt_github_url(self):
+        """Ask user for GitHub Repo URL."""
+        try:
+            import tkinter as tk
+            from tkinter import simpledialog, messagebox
+            
+            root = tk.Tk()
+            root.withdraw()
+            
+            while True:
+                url = simpledialog.askstring(
+                    "Setup Update Source",
+                    "Auto-Update Configuration Missing.\n\n"
+                    "Please enter the GitHub Repository URL:\n"
+                    "(e.g., https://github.com/user/repo)"
+                )
+                
+                if not url:
+                    if messagebox.askyesno("Skip?", "Without a URL, auto-updates will be disabled. Skip?"):
+                        root.destroy()
+                        return None, None
+                    continue
+                
+                # Parse URL
+                match = re.search(r'github\.com/([^/]+)/([^/]+)', url)
+                if match:
+                    root.destroy()
+                    return match.group(1), match.group(2).removesuffix('.git')
+                else:
+                    messagebox.showerror("Error", "Invalid GitHub URL. Please try again.")
+            
+        except Exception as e:
+            self.log(f"GUI Prompt failed: {e}", "ERROR")
+            return None, None
+
     def check_for_updates(self):
         """
         Check GitHub Releases for a newer version.
@@ -201,9 +283,14 @@ class Launcher:
             self.log("Update check skipped (--skip-update flag)")
             return False, None, None
 
-        self.log(f"Checking for updates... (current: v{__version__})")
+        owner, repo = self.get_github_config()
+        if not owner or not repo:
+            self.log("No GitHub config found. Skipping update check.", "WARNING")
+            return False, None, None
 
-        api_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+        self.log(f"Checking for updates from {owner}/{repo}... (current: v{__version__})")
+
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
 
         try:
             request = urllib.request.Request(
@@ -381,26 +468,26 @@ class Launcher:
             from src.core.secrets_manager import SecretsManager
             
             with SecretsManager() as secrets:
-                # Import and run the IPC server inside the secrets context
-                print("[Launcher] Importing IPC server...")
-                from src.core.ipc_server import IPCServer
-                print("[Launcher] IPC server imported successfully")
-
-                print("=" * 50)
-                print(f"  {__app_name__}")
-                print(f"  Version {__version__}")
-                print("=" * 50)
-
-                print("[Launcher] Creating IPCServer instance...")
-                server = IPCServer()
-                print("[Launcher] IPCServer created, starting...")
-
+                # Import and run the GUI (which manages the IPC server)
+                print("[Launcher] Importing App UI...")
                 try:
-                    server.start()
-                except KeyboardInterrupt:
-                    print("\n[Launcher] Shutdown requested...")
-                finally:
-                    server.stop()
+                    from src.gui.app_ui import AppUI
+                    print("[Launcher] App UI imported successfully")
+
+                    print("=" * 50)
+                    print(f"  {__app_name__}")
+                    print(f"  Version {__version__}")
+                    print("=" * 50)
+
+                    print("[Launcher] Starting GUI...")
+                    app = AppUI()
+                    app.protocol("WM_DELETE_WINDOW", app.on_closing)
+                    app.mainloop()
+                    
+                except ImportError as e:
+                    raise ImportError(f"Could not import AppUI: {e}")
+                except Exception as e:
+                    raise RuntimeError(f"App execution failed: {e}")
 
         except ImportError as e:
             self.log(f"Failed to import main application: {e}", "ERROR")
@@ -643,15 +730,13 @@ class Launcher:
         update_available, new_version, download_url = self.check_for_updates()
 
         if update_available and download_url:
-            if self.prompt_for_update(new_version, download_url):
-                update_path = self.download_update(download_url, new_version)
-                if update_path:
-                    self.apply_update(update_path)
-                    # If we get here, apply_update failed
-                    self.log("Update failed. Continuing with current version.", "WARNING")
-            else:
-                self.log("User declined update.")
-
+            self.log(f"Update found (v{new_version}). Installing automatically...")
+            update_path = self.download_update(download_url, new_version)
+            if update_path:
+                self.apply_update(update_path)
+                # If we get here, apply_update failed
+                self.log("Update failed. Continuing with current version.", "WARNING")
+        
         print("[Launcher] Update check completed")
 
         # Step 3: Launch main application
