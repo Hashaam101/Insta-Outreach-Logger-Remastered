@@ -11,6 +11,9 @@ import sys
 __version__ = "1.0.0"
 __app_name__ = "Insta Outreach Logger (Remastered)"
 
+# IPC Configuration
+IPC_PORT = 65432  # Port for local IPC communication between components
+
 # GitHub repository for auto-update checks
 GITHUB_OWNER = "hashaam101"
 GITHUB_REPO = "Insta-Outreach-Logger-Remastered"

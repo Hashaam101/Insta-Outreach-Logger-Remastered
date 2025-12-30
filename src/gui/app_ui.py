@@ -127,7 +127,8 @@ class SettingsWindow(ctk.CTkToplevel):
             try:
                 with open(USER_PREFS_PATH, 'r') as f:
                     return json.load(f)
-            except: pass
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"[Settings] Failed to load preferences: {e}")
         return {}
 
     def _load_update_config(self):
@@ -135,7 +136,8 @@ class SettingsWindow(ctk.CTkToplevel):
             try:
                 with open(UPDATE_CONFIG_PATH, 'r') as f:
                     return json.load(f)
-            except: pass
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"[Settings] Failed to load update config: {e}")
         return {}
 
     def _save_prefs(self):

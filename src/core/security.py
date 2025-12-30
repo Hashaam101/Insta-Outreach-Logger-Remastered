@@ -9,10 +9,29 @@ Handles:
 import hmac
 import hashlib
 import secrets
+import os
+import sys
 from datetime import datetime, timezone, timedelta
 
-# This key must be identical in both the compiled app and the dev script.
-MASTER_SECRET_KEY = "IOL_SEC_KEY_v1_" + "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+def _load_master_secret():
+    """
+    Load master secret key from environment variable.
+    Falls back to generating one if not set (for backward compatibility).
+    
+    WARNING: The fallback is for transition only. Always set IOL_MASTER_SECRET in production.
+    """
+    master_secret = os.environ.get('IOL_MASTER_SECRET')
+    
+    if not master_secret:
+        # Fallback for backward compatibility - generates a session key
+        # This means the key will change on each restart, which is NOT ideal for production
+        fallback_key = "IOL_SEC_KEY_v1_" + "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        print("[SECURITY WARNING] IOL_MASTER_SECRET not set. Using fallback key. Please set in environment.", file=sys.stderr)
+        return fallback_key
+    
+    return master_secret
+
+MASTER_SECRET_KEY = _load_master_secret()
 
 def generate_token():
     """Generate a random 8-character hex token."""

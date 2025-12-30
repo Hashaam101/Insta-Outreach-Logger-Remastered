@@ -2,13 +2,15 @@
 Setup Wizard for Insta Outreach Logger.
 
 This wizard handles first-time setup by accepting a Setup_Pack.zip file
-containing the Oracle Wallet and local_config.py credentials.
+containing the .env file with database credentials (TLS connection string).
 
 Features:
 - Sequential setup flow (Steps 1-4)
 - Secure token validation
 - Automated extension deployment to Documents
 - Operator discovery and registration
+
+Note: Oracle Wallet is no longer used. Database connection uses TLS connection strings.
 """
 
 import sys
@@ -377,10 +379,12 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk): # type: igno
         self.next_button.pack(side="right")
 
     def _check_existing_files(self):
+        """Check if configuration already exists (either secure zip or local .env)."""
         docs_dir = os.path.join(os.path.expanduser("~"), "Documents")
         secrets_dir = os.path.join(docs_dir, "Insta Logger Remastered", "secrets")
         has_secure = os.path.exists(secrets_dir) and any(f.startswith("Setup_Pack_") for f in os.listdir(secrets_dir))
-        has_local = os.path.exists(os.path.join(project_root, 'local_config.py')) and os.path.exists(os.path.join(project_root, 'assets', 'wallet', 'cwallet.sso'))
+        # Only check for .env file now (wallet no longer required)
+        has_local = os.path.exists(os.path.join(project_root, '.env'))
         if has_secure or has_local:
             self.is_reconfiguring = True
             self._show_status("Configuration found", "success")
@@ -554,13 +558,15 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk): # type: igno
         return get_zip_password(m.group(1)) if m else None
 
     def _validate_zip(self, path):
+        """Validate Setup_Pack.zip contains .env file with required variables."""
         try:
             pwd = self._get_zip_password_from_filename(path)
             with pyzipper.AESZipFile(path, 'r') as zf:
                 if pwd: zf.setpassword(pwd)
                 files = zf.namelist()
                 if pwd: zf.read(files[0])
-                req = ['cwallet.sso', 'local_config.py']
+                # Only require .env file now (wallet removed)
+                req = ['.env']
                 found = {os.path.basename(f) for f in files}
                 missing = [r for r in req if r not in found]
                 return (True, "Valid") if not missing else (False, f"Missing: {missing}")
@@ -571,28 +577,32 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk): # type: igno
         threading.Thread(target=self._fetch_operators_thread, args=(path,), daemon=True).start()
 
     def _fetch_operators_thread(self, path):
+        """Load operators from database using TLS connection string (no wallet needed)."""
         ops, err = [], None
         try:
+            from dotenv import load_dotenv
             tmp = tempfile.mkdtemp()
-            wlt = os.path.join(tmp, "wallet")
-            os.makedirs(wlt)
             pwd = self._get_zip_password_from_filename(path)
+            
+            # Extract only .env file
             with pyzipper.AESZipFile(path, 'r') as zf:
                 if pwd: zf.setpassword(pwd)
                 for info in zf.infolist():
-                    bn = os.path.basename(info.filename)
-                    if bn == 'local_config.py':
-                        with open(os.path.join(tmp, bn), 'wb') as f: f.write(zf.read(info.filename))
-                    elif bn in ['cwallet.sso', 'tnsnames.ora', 'sqlnet.ora']:
-                        with open(os.path.join(wlt, bn), 'wb') as f: f.write(zf.read(info.filename))
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("temp_config", os.path.join(tmp, 'local_config.py'))
-            if spec is None or spec.loader is None:
-                raise ImportError("Could not load config spec")
-            tc = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(tc)
+                    if os.path.basename(info.filename) == '.env':
+                        with open(os.path.join(tmp, '.env'), 'wb') as f: 
+                            f.write(zf.read(info.filename))
+                        break
+            
+            # Load environment variables from extracted .env
+            load_dotenv(os.path.join(tmp, '.env'))
+            
+            # Connect using TLS connection string (no wallet directory)
             import oracledb
-            conn = oracledb.connect(user=tc.DB_USER, password=tc.DB_PASSWORD, dsn=tc.DB_DSN, config_dir=wlt)
+            conn = oracledb.connect(
+                user=os.getenv('DB_USER'), 
+                password=os.getenv('DB_PASSWORD'), 
+                dsn=os.getenv('DB_DSN')
+            )
             cur = conn.cursor()
             cur.execute("SELECT DISTINCT OWNER_OPERATOR FROM ACTORS")
             ops = [r[0] for r in cur.fetchall() if r[0]]
@@ -602,14 +612,18 @@ class SetupWizard(ctk.CTk if not DND_AVAILABLE else TkinterDnD.Tk): # type: igno
         self.after(0, lambda: self._update_operators_ui(ops, err))
 
     def _fetch_operators_from_local(self):
+        """Load operators from local .env using TLS connection string."""
         ops, err = [], None
         try:
             from src.core.secrets_manager import SecretsManager
             with SecretsManager():
-                import local_config
                 import oracledb
-                wd = os.environ.get('DB_WALLET_DIR', os.path.join(project_root, 'assets', 'wallet'))
-                conn = oracledb.connect(user=local_config.DB_USER, password=local_config.DB_PASSWORD, dsn=local_config.DB_DSN, config_dir=wd)
+                # Connect using TLS connection string from .env (no wallet)
+                conn = oracledb.connect(
+                    user=os.getenv('DB_USER'), 
+                    password=os.getenv('DB_PASSWORD'), 
+                    dsn=os.getenv('DB_DSN')
+                )
                 cur = conn.cursor()
                 cur.execute("SELECT DISTINCT OWNER_OPERATOR FROM ACTORS")
                 ops = [r[0] for r in cur.fetchall() if r[0]]

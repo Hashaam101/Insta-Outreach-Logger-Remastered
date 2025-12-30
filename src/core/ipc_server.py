@@ -26,6 +26,12 @@ from local_db import LocalDatabase
 from sync_engine import SyncEngine
 from contact_discovery import ContactDiscoverer
 from security import PreFlightChecker
+from input_validation import (
+    validate_outreach_log,
+    validate_prospect_status,
+    validate_payload_size,
+    sanitize_username
+)
 from ipc_protocol import (
     PORT,
     AUTH_KEY,
@@ -33,7 +39,11 @@ from ipc_protocol import (
     send_msg,
     create_ack_response,
     create_error_response,
-    MessageType
+    MessageType,
+    generate_challenge,
+    verify_response,
+    create_challenge_message,
+    RateLimiter
 )
 
 # Define path for operator config - handle both frozen (PyInstaller) and dev environments
@@ -67,6 +77,9 @@ class IPCServer:
         
         # Auto Switch State
         self.session_outreach_count = 0
+        
+        # Rate limiter for authentication
+        self.rate_limiter = RateLimiter(max_attempts=5, window_seconds=300)
         
         # Pass server reference to SyncEngine so it can read session_state
         self.sync_engine = SyncEngine(
@@ -237,17 +250,53 @@ class IPCServer:
             print(f"[IPC] Client {client_id} handler terminated")
 
     def _authenticate_client(self, client_socket: socket.socket, client_id: str) -> bool:
+        """
+        Enhanced authentication using HMAC challenge-response.
+        
+        Args:
+            client_socket: The client socket.
+            client_id: Identifier for the client.
+        
+        Returns:
+            True if authentication succeeds, False otherwise.
+        """
         try:
-            auth_msg = recv_msg(client_socket, timeout=10.0)
-            if not auth_msg or auth_msg.get("action") != MessageType.AUTH or auth_msg.get("key", "") != AUTH_KEY.decode("utf-8"):
-                print(f"[IPC] Client {client_id} failed authentication")
-                self._send_to_client(client_id, create_error_response("Invalid AUTH_KEY"))
+            # Check rate limit
+            if not self.rate_limiter.is_allowed(client_id):
+                print(f"[IPC] Client {client_id} rate limited")
+                self._send_to_client(client_id, create_error_response("Rate limited. Try again later."))
                 return False
+            
+            # Generate and send challenge
+            challenge = generate_challenge()
+            send_msg(client_socket, create_challenge_message(challenge))
+            
+            # Receive response
+            auth_msg = recv_msg(client_socket, timeout=10.0)
+            
+            if not auth_msg or auth_msg.get("action") != MessageType.AUTH:
+                print(f"[IPC] Client {client_id} sent invalid auth message")
+                self.rate_limiter.record_attempt(client_id, False)
+                self._send_to_client(client_id, create_error_response("Invalid authentication"))
+                return False
+            
+            # Verify response
+            response = auth_msg.get("response", "")
+            if not verify_response(challenge, response, AUTH_KEY):
+                print(f"[IPC] Client {client_id} failed authentication")
+                self.rate_limiter.record_attempt(client_id, False)
+                self._send_to_client(client_id, create_error_response("Invalid credentials"))
+                return False
+            
+            # Success
+            self.rate_limiter.record_attempt(client_id, True)
             self._send_to_client(client_id, create_ack_response(True, {"status": "authenticated"}))
             print(f"[IPC] Client {client_id} authenticated successfully")
             return True
+            
         except Exception as e:
             print(f"[IPC] Auth error for {client_id}: {e}")
+            self.rate_limiter.record_attempt(client_id, False)
             return False
 
     def _process_message(self, msg: dict, client_id: str) -> dict:
@@ -278,21 +327,30 @@ class IPCServer:
     def _handle_log_outreach(self, msg: dict, client_id: str) -> dict:
         """
         Handle LOG_OUTREACH message.
-        1. Perform Pre-Flight Safety Checks.
-        2. Log Event to Local DB.
-        3. Check Auto Tab Switcher Trigger.
+        1. Validate and sanitize inputs.
+        2. Perform Pre-Flight Safety Checks.
+        3. Log Event to Local DB.
+        4. Check Auto Tab Switcher Trigger.
         """
         try:
             payload = msg.get("payload", msg)
-            target = payload.get("target")
-            actor = payload.get("actor")
-            message = payload.get("message", "")
+            
+            # Validate payload size
+            is_valid, error = validate_payload_size(payload)
+            if not is_valid:
+                return create_error_response(error)
+            
+            # Validate and sanitize outreach log data
+            is_valid, error, sanitized_payload = validate_outreach_log(payload)
+            if not is_valid:
+                return create_error_response(f"Validation error: {error}")
+            
+            target = sanitized_payload['target']
+            actor = sanitized_payload['actor']
+            message = sanitized_payload.get('message', '')
             
             act_id = actor # Temp: Use username as ID locally until sync resolves it
             opr_id = self.operator_name # Temp
-
-            if not target or not actor:
-                return create_error_response("Missing 'target' or 'actor'")
 
             # --- 1. PRE-FLIGHT CHECK ---
             with self._lock:
@@ -305,7 +363,7 @@ class IPCServer:
             log_data = {
                 "target_username": target,
                 "actor_username": actor,
-                "message_text": message,
+                "message_text": message if message else None,
                 "operator_name": self.operator_name,
                 "act_id": act_id,
                 "opr_id": opr_id,
@@ -364,10 +422,18 @@ class IPCServer:
         """Handle CHECK_PROSPECT_STATUS message."""
         try:
             payload = msg.get("payload", msg)
-            target = payload.get("target")
-
-            if not target:
-                return create_error_response("Missing 'target'")
+            
+            # Validate payload size
+            is_valid, error = validate_payload_size(payload)
+            if not is_valid:
+                return create_error_response(error)
+            
+            # Validate and sanitize prospect status query
+            is_valid, error, sanitized_payload = validate_prospect_status(payload)
+            if not is_valid:
+                return create_error_response(f"Validation error: {error}")
+            
+            target = sanitized_payload['target']
 
             with self._lock:
                 local_prospect = self.db.get_prospect(target)

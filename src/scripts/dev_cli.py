@@ -51,7 +51,7 @@ def print_menu():
     """Print the main menu."""
     print(f"\n{Colors.BOLD}Select an option:{Colors.END}\n")
     print(f"  {Colors.GREEN}1.{Colors.END} Compile                 (PyInstaller -> dist/InstaLogger/)")
-    print(f"  {Colors.GREEN}2.{Colors.END} Generate Setup_Pack     (Zip wallet + local_config.py)")
+    print(f"  {Colors.GREEN}2.{Colors.END} Generate Setup_Pack     (Zip .env file only)")
     print(f"  {Colors.GREEN}3.{Colors.END} Bump Version & Tag      (Update version, git tag, push)")
     print(f"  {Colors.GREEN}4.{Colors.END} Clean Artifacts         (Remove build/, dist/, *.spec)")
     print(f"  {Colors.GREEN}5.{Colors.END} MASTER BUILD            (Full pipeline -> InstaLogger_App.zip)")
@@ -335,11 +335,10 @@ def action_create_distribution_zip():
 
 
 def action_generate_setup_pack():
-    """Generate Setup_Pack_<token>.zip containing wallet and local_config.py."""
+    """Generate Setup_Pack_<token>.zip containing only the .env file."""
     print(f"\n{Colors.CYAN}[Pack] Generating Secure Setup_Pack...{Colors.END}\n")
 
-    wallet_path = os.path.join(PROJECT_ROOT, 'assets', 'wallet')
-    config_path = os.path.join(PROJECT_ROOT, 'local_config.py')
+    env_path = os.path.join(PROJECT_ROOT, '.env')
     dist_path = os.path.join(PROJECT_ROOT, 'dist')
 
     # Generate Token and Password
@@ -354,23 +353,15 @@ def action_generate_setup_pack():
     # Create dist directory if it doesn't exist
     os.makedirs(dist_path, exist_ok=True)
 
-    # Verify required files exist
-    missing = []
-    if not os.path.isdir(wallet_path):
-        missing.append(f"  - Wallet folder: {wallet_path}")
-    else:
-        # Check for essential wallet files
-        cwallet_path = os.path.join(wallet_path, 'cwallet.sso')
-        if not os.path.exists(cwallet_path):
-            missing.append(f"  - Wallet file: {cwallet_path}")
-
-    if not os.path.isfile(config_path):
-        missing.append(f"  - Config file: {config_path}")
-
-    if missing:
-        print(f"{Colors.RED}[Error] Missing required files:{Colors.END}")
-        for m in missing:
-            print(m)
+    # Verify .env file exists
+    if not os.path.isfile(env_path):
+        print(f"{Colors.RED}[Error] Missing required file: {env_path}{Colors.END}")
+        print(f"\n{Colors.YELLOW}Make sure your .env file contains:{Colors.END}")
+        print("  - DB_USER=your_username")
+        print("  - DB_PASSWORD=your_password")
+        print("  - DB_DSN=(your_full_tls_connection_string)")
+        print("  - IOL_MASTER_SECRET=your_secret")
+        print("  - IOL_IPC_AUTH_KEY=your_key")
         return False
 
     # Create the zip file with AES encryption
@@ -378,22 +369,15 @@ def action_generate_setup_pack():
         with pyzipper.AESZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as zf:
             zf.setpassword(password)
             
-            # Add wallet folder
-            for root, dirs, files in os.walk(wallet_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.join('wallet', os.path.relpath(file_path, wallet_path))
-                    zf.write(file_path, arcname)
-                    print(f"  + {arcname}")
-
-            # Add local_config.py
-            zf.write(config_path, 'local_config.py')
-            print(f"  + local_config.py")
+            # Add .env file only
+            zf.write(env_path, '.env')
+            print(f"  + .env")
 
         size_kb = os.path.getsize(output_path) / 1024
         print(f"\n{Colors.GREEN}[Success] {output_filename} created!{Colors.END}")
         print(f"  Output: {output_path}")
         print(f"  Size: {size_kb:.2f} KB")
+        print(f"\n{Colors.YELLOW}Note: No wallet files needed! Using TLS connection string.{Colors.END}")
         return True
 
     except Exception as e:

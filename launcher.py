@@ -12,19 +12,31 @@ Usage:
     python launcher.py [--skip-update] [--debug]
 """
 
+
+
 import os
 import sys
 import json
-import re
+import time
+import datetime
+import traceback
+import shutil
+import subprocess
 import urllib.request
 import urllib.error
 import tempfile
-import shutil
-import subprocess
 import argparse
-import traceback
-import datetime
-import time
+import re
+
+# Import version info and LOG_DIR early
+try:
+    from src.core.version import __version__, __app_name__, GITHUB_OWNER, GITHUB_REPO, compare_versions, LOG_DIR
+except ImportError:
+    __version__ = "0.0.0"
+    __app_name__ = "Insta Outreach Logger"
+    GITHUB_OWNER = "hashaam101"
+    GITHUB_REPO = "Insta-Outreach-Logger-Remastered"
+    LOG_DIR = None
 
 # --- Crash Log Setup ---
 # Log crashes to a file for debugging compiled exe issues
@@ -126,7 +138,7 @@ class Launcher:
     def __init__(self, skip_update=False, debug=False):
         self.skip_update = skip_update
         self.debug = debug
-        self.config_path = os.path.join(PROJECT_ROOT, 'local_config.py')
+        self.env_path = os.path.join(PROJECT_ROOT, '.env')
         self.wallet_path = os.path.join(PROJECT_ROOT, 'assets', 'wallet', 'cwallet.sso')
         self.update_config_path = os.path.join(PROJECT_ROOT, 'update_config.json')
 
@@ -153,10 +165,10 @@ class Launcher:
         except Exception: pass
 
         # 3. Legacy/Dev Check
-        config_exists = os.path.exists(self.config_path)
+        env_exists = os.path.exists(self.env_path)
         wallet_exists = os.path.exists(self.wallet_path)
 
-        return op_config_exists and (has_secure or (config_exists and wallet_exists))
+        return op_config_exists and (has_secure or (env_exists and wallet_exists))
 
     def run_setup_wizard(self):
         """Launch the setup wizard for first-time configuration."""

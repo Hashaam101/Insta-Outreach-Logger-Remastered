@@ -1,14 +1,19 @@
 import oracledb
 import os
 import sys
+from dotenv import load_dotenv
 
-# Add the project root to the Python path to allow importing 'local_config'
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+# Add the project root to the Python path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.append(PROJECT_ROOT)
 
-try:
-    import local_config as secrets
-except ImportError:
-    print("Error: local_config.py not found. Please create it with your database credentials.")
+# Load environment variables from .env file
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
+
+# Check if database credentials are available
+if not all([os.getenv('DB_USER'), os.getenv('DB_PASSWORD'), os.getenv('DB_DSN')]):
+    print("Error: .env file not found or missing database credentials.")
+    print("Please copy .env.example to .env and fill in your database credentials.")
     sys.exit(1)
 
 # --- SQL Commands from schema.dbml ---
@@ -124,20 +129,18 @@ def initialize_schema():
     to create the required schema for the application.
     Includes error handling to prevent crashes if objects already exist.
     """
-    wallet_location = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'wallet'))
-    
-    if not os.path.exists(wallet_location) or not os.listdir(wallet_location):
-        print(f"Error: Wallet directory is empty or not found at {wallet_location}")
-        print("Please run the setup wizard to import the wallet first.")
+    # Check for required environment variables
+    if not all([os.getenv('DB_USER'), os.getenv('DB_PASSWORD'), os.getenv('DB_DSN')]):
+        print("Error: Database credentials not found in .env file")
+        print("Please ensure DB_USER, DB_PASSWORD, and DB_DSN are set.")
         return
 
     try:
         print("Connecting to the database...")
         with oracledb.connect(
-            user=secrets.DB_USER,
-            password=secrets.DB_PASSWORD,
-            dsn=secrets.DB_DSN,
-            config_dir=wallet_location
+            user=os.getenv('DB_USER'),
+            password=os.getenv('DB_PASSWORD'),
+            dsn=os.getenv('DB_DSN')
         ) as connection:
             print("Connection successful.")
             with connection.cursor() as cursor:

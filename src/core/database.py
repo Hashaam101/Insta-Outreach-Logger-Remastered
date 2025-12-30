@@ -3,6 +3,7 @@ import os
 import sys
 import pandas as pd
 from datetime import datetime
+from dotenv import load_dotenv
 
 # Define PROJECT_ROOT for both frozen (PyInstaller) and dev environments
 if getattr(sys, 'frozen', False):
@@ -10,29 +11,29 @@ if getattr(sys, 'frozen', False):
 else:
     PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-sys.path.insert(0, PROJECT_ROOT)
+# Load environment variables from .env file
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
 
-try:
-    import local_config as secrets
-    HAS_CONFIG = True
-except ImportError:
-    HAS_CONFIG = False
+# Check if database credentials are available
+HAS_CONFIG = all([
+    os.getenv('DB_USER'),
+    os.getenv('DB_PASSWORD'),
+    os.getenv('DB_DSN')
+])
 
 class DatabaseManager:
     def __init__(self):
         if not HAS_CONFIG:
-            raise ImportError("Database configuration (local_config.py) not found.")
+            raise ImportError("Database configuration (.env file) not found or incomplete.")
 
-        wallet_location = os.environ.get('DB_WALLET_DIR') or os.path.join(PROJECT_ROOT, 'assets', 'wallet')
+        # Use TLS connection string (no wallet required)
+        # DSN should be a full connection descriptor like:
+        # (description=(retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=your-db.oraclecloud.com))(connect_data=(service_name=your_service_name))(security=(ssl_server_dn_match=yes)))
         
-        if not os.path.exists(wallet_location) or not os.listdir(wallet_location):
-            raise FileNotFoundError(f"Wallet directory is empty or not found at {wallet_location}")
-
         self.pool = oracledb.create_pool(
-            user=secrets.DB_USER,
-            password=secrets.DB_PASSWORD,
-            dsn=secrets.DB_DSN,
-            config_dir=wallet_location,
+            user=os.getenv('DB_USER'),
+            password=os.getenv('DB_PASSWORD'),
+            dsn=os.getenv('DB_DSN'),
             min=1,
             max=5,
             increment=1,

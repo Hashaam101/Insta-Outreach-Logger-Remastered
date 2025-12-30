@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import pyzipper
 from src.core.security import get_zip_password
+from dotenv import load_dotenv
 
 # Default location for the secure zip
 DOCUMENTS_DIR = os.path.join(os.path.expanduser("~"), "Documents")
@@ -14,15 +15,20 @@ SECRETS_DIR = os.path.join(DOCUMENTS_DIR, "Insta Logger Remastered", "secrets")
 class SecretsManager:
     """
     Context manager to securely handle credentials.
-    1. Finds encrypted Setup Pack in Documents.
-    2. Decrypts to a RAM-disk like temporary directory (or standard temp).
-    3. Sets up environment for the application to use them.
-    4. Wipes traces on exit.
+    
+    Oracle Wallet has been replaced with TLS connection strings.
+    This manager now only:
+    1. Finds encrypted Setup Pack in Documents (or uses local .env)
+    2. Extracts .env file to temporary directory
+    3. Loads environment variables for database connection
+    4. Wipes traces on exit
+    
+    Note: DB_DSN should contain a TLS connection string like:
+    (description=(retry_count=3)(address=(protocol=tcps)(port=1522)(host=...))...)
     """
     
     def __init__(self):
         self.temp_dir = None
-        self.wallet_dir = None
         self.zip_path = self._find_secure_zip()
         
     def _find_secure_zip(self):
@@ -47,10 +53,19 @@ class SecretsManager:
         return None
 
     def __enter__(self):
+        # Load .env file from project root
+        if getattr(sys, 'frozen', False):
+            project_root = os.path.dirname(sys.executable)
+        else:
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        
+        env_path = os.path.join(project_root, '.env')
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+        
         if not self.zip_path:
             # Fallback for dev environment or unconfigured state
-            # The app might fail later if it needs real creds, but we don't crash here.
-            print("[SecretsManager] No secure zip found. Using local environment if available.")
+            print("[SecretsManager] No secure zip found. Using .env configuration.")
             return self
 
         try:
@@ -60,27 +75,25 @@ class SecretsManager:
 
             # Create secure temp directory
             self.temp_dir = tempfile.mkdtemp(prefix="iol_sec_")
-            self.wallet_dir = os.path.join(self.temp_dir, 'wallet')
             
             print(f"[SecretsManager] Unlocking credentials from {os.path.basename(self.zip_path)}...")
 
             with pyzipper.AESZipFile(self.zip_path, 'r') as zf:
                 zf.setpassword(password)
                 
-                # Extract all files
-                zf.extractall(self.temp_dir)
+                # Extract only .env file (wallet files no longer needed)
+                for member in zf.namelist():
+                    if os.path.basename(member) == '.env':
+                        zf.extract(member, self.temp_dir)
+                        break
 
-            # 1. Setup Wallet Path (Environment Variable)
-            # This allows DatabaseManager to find it
-            if os.path.exists(self.wallet_dir):
-                os.environ['DB_WALLET_DIR'] = self.wallet_dir
-                print(f"[SecretsManager] Wallet mounted at temporary location.")
-            
-            # 2. Setup Config Module (sys.path)
-            # This allows 'import local_config' to work
-            if os.path.exists(os.path.join(self.temp_dir, 'local_config.py')):
-                sys.path.insert(0, self.temp_dir)
-                print(f"[SecretsManager] Config module loaded.")
+            # Load .env from extracted zip
+            env_file = os.path.join(self.temp_dir, '.env')
+            if os.path.exists(env_file):
+                load_dotenv(env_file)
+                print(f"[SecretsManager] Environment variables loaded from zip.")
+            else:
+                print(f"[SecretsManager] Warning: .env not found in Setup Pack.")
 
             return self
 
@@ -94,15 +107,7 @@ class SecretsManager:
         self._cleanup()
 
     def _cleanup(self):
-        """Remove temporary files and environment changes."""
-        # Restore sys.path
-        if self.temp_dir and self.temp_dir in sys.path:
-            sys.path.remove(self.temp_dir)
-        
-        # Unset env var
-        if 'DB_WALLET_DIR' in os.environ:
-            del os.environ['DB_WALLET_DIR']
-
+        """Remove temporary files."""
         # Wipe temp dir
         if self.temp_dir and os.path.exists(self.temp_dir):
             try:

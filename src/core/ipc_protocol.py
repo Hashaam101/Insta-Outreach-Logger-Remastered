@@ -16,6 +16,11 @@ AI Agent Note: This is Phase 3 - The Brain (IPC Protocol)
 import struct
 import json
 import socket
+import os
+import sys
+import secrets
+import hmac
+import hashlib
 from datetime import datetime
 from typing import Optional, Any
 
@@ -30,13 +35,34 @@ class DateTimeEncoder(json.JSONEncoder):
 # Protocol Constants
 # =============================================================================
 
-# TCP port for local IPC communication
-# Using a high port to avoid conflicts; localhost only for security
-PORT = 65432
+# Import centralized IPC port from version module
+try:
+    from version import IPC_PORT
+    PORT = IPC_PORT
+except ImportError:
+    # Fallback if version module is not available
+    PORT = 65432  # TCP port for local IPC communication
+
+def _load_ipc_auth_key():
+    """
+    Load IPC authentication key from environment variable.
+    Falls back to a default key if not set (for backward compatibility).
+    
+    WARNING: The fallback is for transition only. Always set IOL_IPC_AUTH_KEY in production.
+    """
+    auth_key_str = os.environ.get('IOL_IPC_AUTH_KEY')
+    
+    if not auth_key_str:
+        # Fallback for backward compatibility
+        fallback_key = b'insta_lead_secret_key'
+        print("[SECURITY WARNING] IOL_IPC_AUTH_KEY not set. Using fallback key. Please set in environment.", file=sys.stderr)
+        return fallback_key
+    
+    return auth_key_str.encode('utf-8')
 
 # Simple authentication key for basic security
 # This prevents random processes from connecting to our IPC server
-AUTH_KEY = b'insta_lead_secret_key'
+AUTH_KEY = _load_ipc_auth_key()
 
 # Maximum message size (1MB) to prevent memory exhaustion attacks
 MAX_MESSAGE_SIZE = 1024 * 1024
@@ -313,6 +339,156 @@ def create_server_socket(host: str = "127.0.0.1", port: int = PORT,
     sock.bind((host, port))
     sock.listen(backlog)
     return sock
+
+
+# =============================================================================
+# Enhanced Security: Challenge-Response Authentication
+# =============================================================================
+
+def generate_challenge() -> str:
+    """
+    Generate a random challenge string for authentication.
+    
+    Returns:
+        A random 32-byte hex string.
+    """
+    return secrets.token_hex(32)
+
+
+def compute_response(challenge: str, auth_key: bytes) -> str:
+    """
+    Compute HMAC-SHA256 response to a challenge.
+    
+    Args:
+        challenge: The challenge string from the server.
+        auth_key: The shared authentication key.
+    
+    Returns:
+        The HMAC hex digest.
+    """
+    h = hmac.new(auth_key, challenge.encode('utf-8'), hashlib.sha256)
+    return h.hexdigest()
+
+
+def verify_response(challenge: str, response: str, auth_key: bytes) -> bool:
+    """
+    Verify that the response matches the expected value.
+    
+    Args:
+        challenge: The challenge that was sent.
+        response: The response received from the client.
+        auth_key: The shared authentication key.
+    
+    Returns:
+        True if valid, False otherwise.
+    """
+    expected = compute_response(challenge, auth_key)
+    # Use constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(expected, response)
+
+
+def create_challenge_message(challenge: str) -> dict:
+    """
+    Create a challenge message for authentication.
+    
+    Args:
+        challenge: The challenge string.
+    
+    Returns:
+        Dict ready to be sent via send_msg().
+    """
+    return {
+        "action": "challenge",
+        "challenge": challenge
+    }
+
+
+def create_response_message(challenge: str, auth_key: bytes) -> dict:
+    """
+    Create a response message to a challenge.
+    
+    Args:
+        challenge: The challenge string received.
+        auth_key: The authentication key.
+    
+    Returns:
+        Dict ready to be sent via send_msg().
+    """
+    response = compute_response(challenge, auth_key)
+    return {
+        "action": MessageType.AUTH,
+        "response": response
+    }
+
+
+# =============================================================================
+# Rate Limiting
+# =============================================================================
+
+class RateLimiter:
+    """
+    Simple rate limiter for preventing brute-force attacks.
+    Tracks failed authentication attempts per client.
+    """
+    
+    def __init__(self, max_attempts: int = 5, window_seconds: int = 300):
+        """
+        Initialize rate limiter.
+        
+        Args:
+            max_attempts: Maximum attempts allowed in the time window.
+            window_seconds: Time window in seconds (default: 5 minutes).
+        """
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self._attempts = {}  # {client_id: [(timestamp, success), ...]}
+        self._lock = __import__('threading').Lock()
+    
+    def record_attempt(self, client_id: str, success: bool):
+        """
+        Record an authentication attempt.
+        
+        Args:
+            client_id: Identifier for the client.
+            success: Whether the attempt succeeded.
+        """
+        with self._lock:
+            now = __import__('time').time()
+            
+            if client_id not in self._attempts:
+                self._attempts[client_id] = []
+            
+            # Add new attempt
+            self._attempts[client_id].append((now, success))
+            
+            # Clean up old attempts outside the window
+            cutoff = now - self.window_seconds
+            self._attempts[client_id] = [
+                (ts, succ) for ts, succ in self._attempts[client_id]
+                if ts > cutoff
+            ]
+    
+    def is_allowed(self, client_id: str) -> bool:
+        """
+        Check if a client is allowed to attempt authentication.
+        
+        Args:
+            client_id: Identifier for the client.
+        
+        Returns:
+            True if allowed, False if rate limited.
+        """
+        with self._lock:
+            if client_id not in self._attempts:
+                return True
+            
+            # Count failed attempts in the window
+            failed_attempts = sum(
+                1 for _, success in self._attempts[client_id]
+                if not success
+            )
+            
+            return failed_attempts < self.max_attempts
 
 
 # =============================================================================

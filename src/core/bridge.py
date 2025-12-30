@@ -6,13 +6,35 @@ import socket
 import logging
 import time
 import os
+import hmac
+import hashlib
 
 # --- Configuration ---
 # 1MB max message size
 MAX_MSG_SIZE = 1024 * 1024
-# IPC Port must match the server (ipc_protocol.py)
-PORT = 12345
-AUTH_KEY = b"SECRET_IPC_KEY_2024"  # Must match server
+
+# Import centralized IPC port
+try:
+    from version import IPC_PORT
+    PORT = IPC_PORT
+except ImportError:
+    # Fallback if version module is not available
+    PORT = 65432  # Must match server
+
+def _load_ipc_auth_key():
+    """Load IPC authentication key from environment variable with fallback."""
+    auth_key_str = os.environ.get('IOL_IPC_AUTH_KEY')
+    if not auth_key_str:
+        # Fallback for backward compatibility
+        return b"SECRET_IPC_KEY_2024"
+    return auth_key_str.encode('utf-8')
+
+AUTH_KEY = _load_ipc_auth_key()  # Must match server
+
+def compute_auth_response(challenge: str, auth_key: bytes) -> str:
+    """Compute HMAC-SHA256 response to a challenge."""
+    h = hmac.new(auth_key, challenge.encode('utf-8'), hashlib.sha256)
+    return h.hexdigest()
 
 # Setup logging
 try:
@@ -64,27 +86,56 @@ def read_native_message():
         return None
 
 def connect_to_ipc_server():
-    """Establishes connection to the local Python IPC Server."""
+    """Establishes connection to the local Python IPC Server with enhanced authentication."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect(('127.0.0.1', PORT))
         
-        # Authenticate
-        s.sendall(struct.pack('>I', len(AUTH_KEY) + 1)) # +1 for action byte
-        s.sendall(b'\x01' + AUTH_KEY) # Action 0x01 = AUTH
-        
-        # Read Auth Response
+        # 1. Receive challenge from server
         header = s.recv(4)
-        if not header: return None
+        if not header:
+            logging.error("No challenge received from server")
+            return None
+        
+        length = struct.unpack('>I', header)[0]
+        challenge_bytes = s.recv(length)
+        challenge_msg = json.loads(challenge_bytes.decode('utf-8'))
+        
+        if challenge_msg.get('action') != 'challenge':
+            logging.error(f"Expected challenge, got: {challenge_msg}")
+            return None
+        
+        challenge = challenge_msg.get('challenge')
+        logging.info("Received authentication challenge")
+        
+        # 2. Compute and send response
+        response = compute_auth_response(challenge, AUTH_KEY)
+        auth_msg = {
+            "action": "auth",
+            "response": response
+        }
+        
+        msg_bytes = json.dumps(auth_msg).encode('utf-8')
+        s.sendall(struct.pack('>I', len(msg_bytes)))
+        s.sendall(msg_bytes)
+        
+        # 3. Read authentication result
+        header = s.recv(4)
+        if not header:
+            logging.error("No auth response from server")
+            return None
+        
         length = struct.unpack('>I', header)[0]
         resp_bytes = s.recv(length)
         resp = json.loads(resp_bytes.decode('utf-8'))
         
-        if resp.get('status') == 'ok':
+        if resp.get('success'):
+            logging.info("Authentication successful")
             return s
         else:
-            logging.error(f"Auth failed: {resp}")
+            logging.error(f"Authentication failed: {resp}")
             return None
+            
     except Exception as e:
         logging.error(f"Could not connect to IPC Server: {e}")
         return None

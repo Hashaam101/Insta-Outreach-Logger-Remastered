@@ -69,20 +69,45 @@ ENV/
 env.bak/
 venv.bak/
 
+# CRITICAL: Secrets and Credentials - NEVER COMMIT THESE
+local_config.py
+operator_config.json
+token.pickle
+token.enc
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+client_secret.json
+setup_pack_*.zip
+assets/wallet/
+wallet/
+
+# User-specific files
+user_preferences.json
+update_config.json
+debug_bridge.log
+
 # Node.js / Next.js
 node_modules/
 .next/
 out/
 .vercel
 .env*
+!.env.example
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
 # Database / Local cache
 local_data.db
-local_config.py
-operator_config.json
-debug_bridge.log
-wallet/
-assets/wallet/
+*.db
+*.sqlite
+*.sqlite3
+
+# Local Documents
+precommitdocs/
+
+# Temporarily Ignored Files
+workflows/
