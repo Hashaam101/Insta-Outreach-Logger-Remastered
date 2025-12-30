@@ -445,7 +445,19 @@ body.insta-logger-dragging {
 
 @keyframes pulse-cloud {
     0%, 100% { box-shadow: 0 0 10px rgba(59, 130, 246, 0.3); }
-    50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.8); }
+    50% { box-shadow: 0 0 25px rgba(59, 130, 246, 0.9); }
+}
+
+/* Offline / Discconnected - Red Pulse Strong */
+.insta-warning-banner.banner-style-offline {
+    border: 3px solid #ff0000 !important;
+    box-shadow: 0 0 15px rgba(255, 0, 0, 0.6) !important;
+    animation: pulse-offline 1.5s ease-in-out infinite !important;
+}
+
+@keyframes pulse-offline {
+    0%, 100% { box-shadow: 0 0 10px rgba(255, 0, 0, 0.4); }
+    50% { box-shadow: 0 0 30px rgba(255, 0, 0, 0.9); }
 }
 
 /* Stage 3: Found - Green pulsing */

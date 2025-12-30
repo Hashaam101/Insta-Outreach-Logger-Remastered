@@ -7,8 +7,9 @@ console.log('[InstaLogger] Content Script Loaded (v13)');
 // =============================================================================
 // Globals & State
 // =============================================================================
-const CHAT_INPUT_SELECTOR = 'div[role="textbox"][aria-label="Message"]';
+const CHAT_INPUT_SELECTOR = 'div[contenteditable="true"][role="textbox"]';
 const ACTOR_CHECK_INTERVAL = 5000;
+const BANNER_TIMEOUT_MS = 5000; // 5 second timeout for searching state
 
 let activeChatInput = null;
 let lastCheckedUrl = '';
@@ -17,7 +18,9 @@ let isCheckInProgress = false;
 let bannerPulseInterval = null;
 let actorCheckInterval = null;
 let currentActorUsername = null;
-let cachedActors = []; 
+let cachedActors = [];
+let bannerTimeoutId = null;
+let lastSentMessage = null;
 
 // Port connection
 let port = null;
@@ -88,7 +91,7 @@ function scrapeProfileData(username) {
 
     try {
         let fullName = "";
-        
+
         // Strategy A: Open Graph Title
         const ogTitle = document.querySelector('meta[property="og:title"]')?.content;
         if (ogTitle && ogTitle.includes(`@${username}`)) {
@@ -107,15 +110,15 @@ function scrapeProfileData(username) {
             const h1 = document.querySelector('header h1');
             if (h1) fullName = h1.innerText;
         }
-        
+
         if (fullName && /^\d+/.test(fullName)) {
-             const headerHeaders = document.querySelectorAll('header h2');
-             for (const h2 of headerHeaders) {
-                 if (h2.innerText.length > 2) {
-                     fullName = h2.innerText; 
-                     break;
-                 }
-             }
+            const headerHeaders = document.querySelectorAll('header h2');
+            for (const h2 of headerHeaders) {
+                if (h2.innerText.length > 2) {
+                    fullName = h2.innerText;
+                    break;
+                }
+            }
         }
 
         // Bio Scraping
@@ -125,9 +128,9 @@ function scrapeProfileData(username) {
         if (header) {
             const linkEl = header.querySelector('a[rel*="nofollow"]');
             if (linkEl) externalLink = linkEl.href;
-            bioText = header.innerText; 
+            bioText = header.innerText;
         }
-        
+
         const ogDesc = document.querySelector('meta[property="og:description"]')?.content;
         if (!bioText && ogDesc) bioText = ogDesc;
 
@@ -158,20 +161,40 @@ function cacheProfile(username) {
 }
 
 function scrapeCurrentViewerUsername() {
-    const profileLinks = Array.from(document.querySelectorAll('a[href^="/"]'));
-    for (const link of profileLinks) {
-        const href = link.getAttribute('href');
-        if (!href) continue;
-        const hasProfileImg = link.querySelector('img[alt*="profile" i]') || link.querySelector('img[data-testid="user-avatar"]');
-        if (hasProfileImg) {
-            const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
-            if (match && match[1] && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'p'].includes(match[1])) return match[1];
-        }
-        if (link.textContent.trim().toLowerCase() === 'profile') {
-            const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+    // 1. Discovery Mode (New Window/Tab)
+    // If URL has ?discover_actor=true, we are specifically here to find the actor
+    if (window.location.search.includes('discover_actor=true')) {
+        // In discovery mode, trust the sidebar/nav profile link leading to self
+        const profileLink = document.querySelector('a[href^="/"][role="link"] img[alt*="profile" i]')?.closest('a') ||
+            document.querySelector('a[href^="/"][role="link"] img[data-testid="user-avatar"]')?.closest('a');
+
+        if (profileLink) {
+            const match = profileLink.getAttribute('href').match(/^\/([a-zA-Z0-9_.]+)\/?$/);
             if (match && match[1]) return match[1];
         }
     }
+
+    // 2. Normal Mode (Sidebar Scraping - CAREFUL)
+    // Only look in the sidebar navigation to avoid picking up the main profile
+    const sidebar = document.querySelector('div[class*="x1iyjqo2"]') || // Wide sidebar
+        document.querySelector('div[class*="x1p1t2w4"]');  // Narrow nav
+
+    if (sidebar) {
+        // Find the link that contains the user's avatar within the sidebar
+        const avatarLink = Array.from(sidebar.querySelectorAll('a')).find(a =>
+            a.querySelector('img[alt*="profile" i]') || a.querySelector('img[data-testid="user-avatar"]')
+        );
+
+        if (avatarLink) {
+            const href = avatarLink.getAttribute('href');
+            const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+            // Safety: Ensure it's not a generic page like 'explore' or 'reels'
+            if (match && match[1] && !['explore', 'reels', 'direct', 'accounts', 'inbox'].includes(match[1])) {
+                return match[1];
+            }
+        }
+    }
+
     return null;
 }
 
@@ -221,7 +244,7 @@ function startActorVerification() {
 function makeDraggable(element) {
     let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
     function dragMouseDown(e) {
-        if (e.target.closest('.close-btn') || e.target.closest('.status-dropdown-wrapper') || 
+        if (e.target.closest('.close-btn') || e.target.closest('.status-dropdown-wrapper') ||
             e.target.closest('.notes-container') || e.target.closest('.manual-form')) return;
         e.preventDefault();
         pos3 = e.clientX; pos4 = e.clientY;
@@ -301,12 +324,12 @@ async function showStatusBanner(state, data = {}) {
 
     if (data.syncStage) {
         banner.classList.add(`sync-stage-${data.syncStage}`);
-        if(data.syncStage === 'detection-failed') startBannerPulse(banner, 255, 69, 0);
+        if (data.syncStage === 'detection-failed') startBannerPulse(banner, 255, 69, 0);
     }
 
     let isDraggable = false;
     const isContacted = state === 'contacted';
-    
+
     let statusOptions = [];
     if (isExcluded) {
         statusOptions = [
@@ -322,8 +345,8 @@ async function showStatusBanner(state, data = {}) {
             { label: 'Paid', value: 'Paid' },
             { label: 'Tableturnerr Client', value: 'Tableturnerr Client' },
             { label: 'Excluded', value: 'Excluded' },
-            { 
-                label: isContacted ? 'Mark as Not Contacted' : 'Mark as Contacted Manually', 
+            {
+                label: isContacted ? 'Mark as Not Contacted' : 'Mark as Contacted Manually',
                 value: isContacted ? 'FLIP_TO_NOT_CONTACTED' : 'FLIP_TO_CONTACTED',
                 style: 'color: #ff4444; font-weight: bold;'
             }
@@ -344,7 +367,7 @@ async function showStatusBanner(state, data = {}) {
             banner.innerHTML = `<div class="searching-icon-container"><img src="${searchingIconUrl}" /></div><p class="searching-text">Checking...</p>`;
             break;
         case 'offline':
-            banner.classList.add('banner-style-base', 'insta-warning-banner--excluded'); // Use charcoal for offline
+            banner.classList.add('banner-style-base', 'insta-warning-banner--excluded', 'banner-style-offline'); // Use charcoal for offline
             banner.innerHTML = `
                 <div class="banner-content">
                     <div class="searching-icon-container" style="background-color: #444;"><span style="font-size: 24px;">⚠️</span></div>
@@ -355,22 +378,23 @@ async function showStatusBanner(state, data = {}) {
                     </div>
                 </div>`;
             banner.querySelector('#offline-retry-btn').onclick = () => runProfileCheck(lastCheckedUsername);
+            startBannerPulse(banner, 255, 0, 0); // Force JS pulse as well for redundancy
             break;
         case 'contacted':
         case 'not_contacted':
-            isDraggable = true;            if (isExcluded) banner.classList.add('banner-style-base', 'insta-warning-banner--excluded');
+            isDraggable = true; if (isExcluded) banner.classList.add('banner-style-base', 'insta-warning-banner--excluded');
             else banner.classList.add('banner-style-base', isContacted ? 'insta-warning-banner--contacted' : 'insta-warning-banner--not-contacted');
-            
+
             const iconUrl = chrome.runtime.getURL(isExcluded ? 'assets/contacted-icon.svg' : (isContacted ? 'assets/contacted-icon.svg' : 'assets/not-contacted-icon.svg'));
             const closeIconUrl = chrome.runtime.getURL('assets/close-icon.svg');
             const arrowUrl = chrome.runtime.getURL('assets/dropdown-arrow.svg');
-            
+
             const rawActor = data.owner_actor;
             const actor = (rawActor && rawActor !== 'null' && rawActor !== 'None') ? rawActor : 'Unknown';
             const dateStr = formatDate(data.last_updated);
-            
+
             let subtitle = isExcluded ? `<b style="color:#aaa;">EXCLUDED</b> from logging` :
-                          (isContacted ? `By <b style="color:white;">${actor}</b> on <b style="color:white;">${dateStr}</b>` : 'Not Contacted Before');
+                (isContacted ? `By <b style="color:white;">${actor}</b> on <b style="color:white;">${dateStr}</b>` : 'Not Contacted Before');
 
             banner.innerHTML = `
                 <div class="banner-content">
@@ -379,20 +403,21 @@ async function showStatusBanner(state, data = {}) {
                         <div id="banner-step-main">
                             <p class="contact-title">${isExcluded ? 'Excluded Target' : (isContacted ? 'Previously Contacted' : 'Not Contacted Before')}</p>
                             <p class="contact-subtitle">${subtitle}</p>
+                            <div class="contact-target" style="font-size: 10px; color: #999; margin-top: 4px; text-align: center;">Target: @${data.target_username || 'unknown'}</div>
                             <div class="status-dropdown-wrapper" style="margin-top: 10px;">
                                 <select class="status-dropdown">${optionsHtml}</select>
                                 <img src="${arrowUrl}" class="dropdown-arrow" />
                             </div>
                             <div class="notes-container" style="margin-top: 10px;">
-                                ${notesValue ? 
-                                    `<textarea class="notes-textarea" maxlength="${charLimit}">${notesValue}</textarea>
+                                ${notesValue ?
+                    `<textarea class="notes-textarea" maxlength="${charLimit}">${notesValue}</textarea>
                                      <div class="notes-footer"><span class="char-count">${notesValue.length}/${charLimit}</span><button class="save-notes-btn">Save Note</button></div>` :
-                                    `<button class="toggle-notes-btn">Add a Note</button>
+                    `<button class="toggle-notes-btn">Add a Note</button>
                                      <div class="notes-input-wrapper" style="display: none;">
                                         <textarea class="notes-textarea" maxlength="${charLimit}"></textarea>
                                         <div class="notes-footer"><span class="char-count">0/${charLimit}</span><button class="save-notes-btn">Save Note</button></div>
                                      </div>`
-                                }
+                }
                             </div>
                         </div>
                         <div id="banner-step-manual" style="display: none; width: 280px;">
@@ -537,7 +562,7 @@ function deleteProspect(username) {
 
 async function updateProspectStatus(username, newStatus, dropdown, notes = null, callback = null) {
     const actorUsername = await getActorUsername();
-    
+
     // Retrieve cached profile data
     chrome.storage.local.get('profileCache', (result) => {
         const cache = result.profileCache || {};
@@ -553,12 +578,12 @@ async function updateProspectStatus(username, newStatus, dropdown, notes = null,
 
         sendMessageToBackground({
             type: 'UPDATE_PROSPECT_STATUS',
-            payload: { 
-                target: username, 
-                new_status: newStatus, 
-                actor: actorUsername, 
+            payload: {
+                target: username,
+                new_status: newStatus,
+                actor: actorUsername,
                 notes: notes,
-                profile_data: profileData 
+                profile_data: profileData
             }
         }, (response) => {
             if (response?.success || response?.data?.success) updateDropdownSyncStage(dropdown, 'synced');
@@ -574,6 +599,22 @@ async function updateProspectStatus(username, newStatus, dropdown, notes = null,
 // =============================================================================
 
 function getInstagramUsername(inputElement) {
+    // Get current actor username to exclude from detection
+    let currentActor = currentActorUsername; // Use global variable
+
+    // PRIORITY 0: URL-based detection for profile pages (most reliable)
+    const pathParts = window.location.pathname.split('/').filter(p => p);
+    if (pathParts.length === 1 && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'login', 'stories'].includes(pathParts[0])) {
+        const urlUsername = pathParts[0];
+        if (currentActor && urlUsername === currentActor) {
+            console.log('[InstaLogger] URL username is actor, skipping:', urlUsername);
+        } else {
+            console.log('[InstaLogger] Username detected (URL - profile page):', urlUsername);
+            return urlUsername;
+        }
+    }
+
+    // Strategy 1: Check input element's parent hierarchy for profile links
     if (inputElement) {
         let currentElement = inputElement;
         for (let i = 0; i < 25 && currentElement; i++) {
@@ -589,31 +630,115 @@ function getInstagramUsername(inputElement) {
                             if (username) return username;
                         }
                     }
-                } catch (e) {}
+                } catch (e) { }
             }
             currentElement = currentElement.parentElement;
         }
     }
+
+    // Strategy 2: Check main content header for profile links
     const mainContent = document.querySelector('div[role="main"]');
     if (mainContent) {
         const headerLinks = mainContent.querySelectorAll('header a[href^="/"]');
         for (const link of headerLinks) {
-             const href = link.getAttribute('href');
-             const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
-             if (match && match[1] && !['explore', 'direct', 'reels', 'stories'].includes(match[1])) return match[1];
+            const href = link.getAttribute('href');
+            const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+            if (match && match[1] && !['explore', 'direct', 'reels', 'stories'].includes(match[1])) return match[1];
         }
         const headerTitle = mainContent.querySelector('h2');
         if (headerTitle) {
             const parentLink = headerTitle.closest('a');
             if (parentLink) {
-                 const href = parentLink.getAttribute('href');
-                 const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
-                 if (match && match[1]) return match[1];
+                const href = parentLink.getAttribute('href');
+                const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+                if (match && match[1]) return match[1];
             }
         }
     }
-    const pathParts = window.location.pathname.split('/').filter(p => p);
+
+    // PRIORITY: DM Thread Detection (Most common use case)
+    if (window.location.pathname.includes('/direct/t/')) {
+        console.log('[InstaLogger] Detecting username in DM thread...');
+
+        // Method 1: Thread header links
+        const threadHeader = document.querySelector('div[role="main"] header');
+        if (threadHeader) {
+            const links = threadHeader.querySelectorAll('a[href^="/"]');
+            console.log('[InstaLogger] Found', links.length, 'links in thread header');
+            for (const link of links) {
+                const href = link.getAttribute('href');
+                const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+                if (match && match[1] && !['direct', 'explore', 'reels', 'stories', 'accounts'].includes(match[1])) {
+                    // Skip if this is the actor's own username
+                    if (currentActor && match[1] === currentActor) {
+                        console.log('[InstaLogger] Skipping actor username:', match[1]);
+                        continue;
+                    }
+                    console.log('[InstaLogger] ✓ Username found (header link):', match[1]);
+                    return match[1];
+                }
+            }
+
+            // Method 2: Text content extraction
+            const headerText = threadHeader.innerText || threadHeader.textContent || '';
+            console.log('[InstaLogger] Header text:', headerText.substring(0, 50));
+            const atMatch = headerText.match(/@([a-zA-Z0-9_.]+)/);
+            if (atMatch && atMatch[1]) {
+                if (currentActor && atMatch[1] === currentActor) {
+                    console.log('[InstaLogger] Skipping actor username from @pattern:', atMatch[1]);
+                } else {
+                    console.log('[InstaLogger] ✓ Username found (@pattern):', atMatch[1]);
+                    return atMatch[1];
+                }
+            }
+
+            // Method 3: Look for username in spans/divs
+            const textElements = threadHeader.querySelectorAll('span, div');
+            for (const el of textElements) {
+                const text = (el.innerText || el.textContent || '').trim();
+                if (/^[a-zA-Z0-9_.]{1,30}$/.test(text) && text.length > 2) {
+                    if (currentActor && text === currentActor) {
+                        console.log('[InstaLogger] Skipping actor username from text:', text);
+                        continue;
+                    }
+                    console.log('[InstaLogger] ✓ Username found (text element):', text);
+                    return text;
+                }
+            }
+        }
+
+        // Method 4: Deep DOM crawl for any profile link
+        console.log('[InstaLogger] Attempting deep DOM crawl...');
+        const allLinks = document.querySelectorAll('a[href^="/"]');
+        for (const link of allLinks) {
+            const href = link.getAttribute('href');
+            const match = href.match(/^\/([a-zA-Z0-9_.]+)\/?$/);
+            if (match && match[1]) {
+                const username = match[1];
+                if (!['direct', 'explore', 'reels', 'stories', 'accounts', 'settings', 'p'].includes(username)) {
+                    // Skip actor's username
+                    if (currentActor && username === currentActor) {
+                        console.log('[InstaLogger] Skipping actor username (DOM crawl):', username);
+                        continue;
+                    }
+
+                    // Check if link is visible
+                    const rect = link.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        console.log('[InstaLogger] ✓ Username found (DOM crawl):', username);
+                        return username;
+                    }
+                }
+            }
+        }
+
+        console.warn('[InstaLogger] ✗ Could not detect username in DM thread');
+    }
+
+    // Strategy 2: Check main content header for profile links
+    // pathParts already declared at function start, no need to redeclare
     if (pathParts.length === 1 && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'login'].includes(pathParts[0])) return pathParts[0];
+
     return pathParts.includes('t') ? "unknown_user_in_thread" : "not_in_a_dm_thread";
 }
 
@@ -622,12 +747,35 @@ async function runProfileCheck(username, silentRefresh = false) {
     isCheckInProgress = true;
     const checkStartedForUsername = username;
     lastCheckedUsername = username;
-    if (!silentRefresh) await showStatusBanner('searching', { syncStage: 'local' });
+
+    // Clear any existing timeout
+    if (bannerTimeoutId) {
+        clearTimeout(bannerTimeoutId);
+        bannerTimeoutId = null;
+    }
+
+    if (!silentRefresh) {
+        await showStatusBanner('searching', { syncStage: 'local', target_username: username });
+
+        // Set timeout to prevent stuck searching state
+        bannerTimeoutId = setTimeout(() => {
+            console.warn('[InstaLogger] Profile check timeout - showing offline');
+            isCheckInProgress = false;
+            showStatusBanner('offline', { target_username: username });
+        }, BANNER_TIMEOUT_MS);
+    }
+
     sendMessageToBackground({ type: 'CHECK_PROSPECT_STATUS', payload: { target: username } }, async (response) => {
+        // Clear timeout on response
+        if (bannerTimeoutId) {
+            clearTimeout(bannerTimeoutId);
+            bannerTimeoutId = null;
+        }
+
         if (lastCheckedUsername !== checkStartedForUsername) { isCheckInProgress = false; return; }
-        
+
         if (response?.message === 'APPLICATION_OFFLINE') {
-            await showStatusBanner('offline');
+            await showStatusBanner('offline', { target_username: username });
             isCheckInProgress = false;
             return;
         }
@@ -638,8 +786,10 @@ async function runProfileCheck(username, silentRefresh = false) {
             return;
         }
         const data = response?.data || response;
-        if (data?.contacted) await showStatusBanner('contacted', { status: data.status, owner_actor: data.owner_actor, last_updated: data.last_updated, notes: data.notes, syncStage: 'complete' });
-        else await showStatusBanner('not_contacted', { syncStage: 'not-found' });
+        // Ensure target_username is in data
+        data.target_username = username;
+        if (data?.contacted) await showStatusBanner('contacted', { status: data.status, owner_actor: data.owner_actor, last_updated: data.last_updated, notes: data.notes, syncStage: 'complete', target_username: username });
+        else await showStatusBanner('not_contacted', { syncStage: 'not-found', target_username: username });
         isCheckInProgress = false;
     });
 }
@@ -665,12 +815,12 @@ async function logOutreach(inputElement) {
     if (!text) return;
     const actor = await getActorUsername();
     if (!lastCheckedUsername || lastCheckedUsername.startsWith('unknown') || actor === 'unknown_actor') return;
-    
+
     // Retrieve cached profile data to send with the log
     chrome.storage.local.get('profileCache', (result) => {
         const cache = result.profileCache || {};
         let profileData = cache[lastCheckedUsername];
-        
+
         // Fallback: Scrape immediately if cache is missing
         if (!profileData) {
             console.log(`[InstaLogger] Cache miss for ${lastCheckedUsername}, scraping on-demand...`);
@@ -679,29 +829,63 @@ async function logOutreach(inputElement) {
 
         profileData = profileData || {};
 
-        sendMessageToBackground({ 
-            type: 'LOG_OUTREACH', 
-            payload: { 
-                target: lastCheckedUsername, 
-                actor: actor, 
+        sendMessageToBackground({
+            type: 'LOG_OUTREACH',
+            payload: {
+                target: lastCheckedUsername,
+                actor: actor,
                 message: text.substring(0, 200),
-                profile_data: profileData 
-            } 
+                profile_data: profileData
+            }
         }, (res) => {
             if (res?.success || res?.data?.log_id) setTimeout(() => { if (lastCheckedUsername && !isCheckInProgress) runProfileCheck(lastCheckedUsername, true); }, 500);
         });
     });
 }
 
-function handleKeyDown(e) { if (e.key === 'Enter' && !e.shiftKey) logOutreach(e.target); }
+function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        console.log('[InstaLogger] Enter key detected, logging outreach...');
+        logOutreach(e.target);
+    }
+}
+
+function handleSendButtonClick(e) {
+    console.log('[InstaLogger] Send button clicked, logging outreach...');
+    const chatInput = document.querySelector(CHAT_INPUT_SELECTOR);
+    if (chatInput) {
+        logOutreach(chatInput);
+    }
+}
 
 function findAndAttach() {
     if (!window.location.pathname.startsWith('/direct/')) return;
+
+    // Attach to input field
     const chatInput = document.querySelector(CHAT_INPUT_SELECTOR);
     if (chatInput && chatInput !== activeChatInput) {
-        if (activeChatInput) activeChatInput.removeEventListener('keydown', handleKeyDown, { capture: true });
+        if (activeChatInput) {
+            activeChatInput.removeEventListener('keydown', handleKeyDown, { capture: true });
+        }
         chatInput.addEventListener('keydown', handleKeyDown, { capture: true });
         activeChatInput = chatInput;
+        console.log('[InstaLogger] Attached to chat input');
+    }
+
+    // Attach to send button
+    // Strategy: Look for button with "Send" text or "Send" label, or fall back to button in footer
+    const buttons = Array.from(document.querySelectorAll('div[role="button"][tabindex="0"]'));
+    const sendButton = buttons.find(b => {
+        const text = b.textContent.trim().toLowerCase();
+        return text === 'send' || b.getAttribute('aria-label') === 'Send';
+    });
+
+    if (sendButton && !sendButton.dataset.instaLoggerAttached) {
+        // Capture on mousedown AND click to ensure we get it before clear
+        sendButton.addEventListener('mousedown', handleSendButtonClick, { capture: true });
+        sendButton.addEventListener('click', handleSendButtonClick, { capture: true }); // Backup
+        sendButton.dataset.instaLoggerAttached = 'true';
+        console.log('[InstaLogger] Attached to send button');
     }
 }
 
@@ -720,7 +904,7 @@ const handleUrlChange = () => {
     stopBannerPulse();
     const profileMatch = url.match(/https:\/\/www\.instagram\.com\/([a-zA-Z0-9_.]+)/);
     if (profileMatch && profileMatch[1] && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'login', 'p'].includes(profileMatch[1])) {
-        lastCheckedUsername = profileMatch[1]; 
+        lastCheckedUsername = profileMatch[1];
         runProfileCheck(profileMatch[1]);
         // Trigger scraping
         setTimeout(() => cacheProfile(profileMatch[1]), 1500);

@@ -1,22 +1,22 @@
 // DM Scroller - Auto scroll through Instagram DM conversation list
 // Remastered v2.4 - Fixed Start Button (Removed Worker) & Enhanced Event Triggering
 
-(function() {
+(function () {
     console.log('[InstaLogger][Scroller] Module Loaded');
 
     // =============================================================================
     // Constants & State
     // =============================================================================
-    
+
     const DEFAULT_SETTINGS = {
         speed: 'medium', // slow, medium, fast
         direction: 'down' // down, up
     };
 
     const PRESETS = {
-        slow: { pixelsPerSecond: 200 },   
-        medium: { pixelsPerSecond: 500 }, 
-        fast: { pixelsPerSecond: 1000 }   
+        slow: { pixelsPerSecond: 200 },
+        medium: { pixelsPerSecond: 500 },
+        fast: { pixelsPerSecond: 1000 }
     };
 
     let settings = { ...DEFAULT_SETTINGS };
@@ -27,7 +27,7 @@
     let statusDot = null;
     let statusText = null;
     let startBtn = null;
-    
+
     // Background Scroll State
     let lastTickTime = 0;
     let scrollAccumulator = 0;
@@ -38,16 +38,16 @@
 
     function createToggleButton() {
         if (document.getElementById('dm-scroller-toggle-btn')) return;
-        
+
         toggleBtn = document.createElement('button');
         toggleBtn.id = 'dm-scroller-toggle-btn';
         toggleBtn.innerHTML = '📜';
         toggleBtn.title = 'Open DM Scroller';
         toggleBtn.style.display = 'none'; // Hidden by default, shown on /direct/
-        
+
         toggleBtn.addEventListener('click', togglePanel);
         document.body.appendChild(toggleBtn);
-        
+
         // Add pulse animation on creation to draw attention
         toggleBtn.classList.add('pulse-once');
         setTimeout(() => {
@@ -131,8 +131,8 @@
         // Event Listeners
         document.getElementById('scroller-minimize').addEventListener('click', toggleMinimize);
         document.getElementById('scroller-close').addEventListener('click', () => {
-             panel.style.display = 'none';
-             stopScrolling();
+            panel.style.display = 'none';
+            stopScrolling();
         });
 
         document.getElementById('scroller-speed').addEventListener('change', (e) => {
@@ -153,7 +153,7 @@
     function makeDraggable(element) {
         let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
         const header = element.querySelector('.scroller-header');
-        
+
         header.onmousedown = dragMouseDown;
 
         function dragMouseDown(e) {
@@ -213,7 +213,7 @@
         settings.direction = dir;
         const downBtn = document.getElementById('scroller-dir-down');
         const upBtn = document.getElementById('scroller-dir-up');
-        
+
         if (dir === 'down') {
             downBtn.classList.add('active');
             upBtn.classList.remove('active');
@@ -232,7 +232,7 @@
         if (!panel) createPanel();
         panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
         if (panel.style.display === 'block') {
-             loadSettings();
+            loadSettings();
         }
     }
 
@@ -258,26 +258,26 @@
                 return grid;
             }
         }
-        
+
         // Strategy 2: Left sidebar scrollables
         const leftScrollables = Array.from(document.querySelectorAll('div')).filter(el => {
             const style = window.getComputedStyle(el);
             const rect = el.getBoundingClientRect();
             return (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-                   rect.width > 200 && rect.width < 500 && // Sidebar width constraints
-                   rect.left < 500 && // Must be on left side
-                   el.scrollHeight > el.clientHeight;
+                rect.width > 200 && rect.width < 500 && // Sidebar width constraints
+                rect.left < 500 && // Must be on left side
+                el.scrollHeight > el.clientHeight;
         });
 
         if (leftScrollables.length > 0) return leftScrollables[0];
 
         // Strategy 3: Any scrollable in main area (fallback)
         const scrollables = Array.from(document.querySelectorAll('div')).filter(el => {
-             const style = window.getComputedStyle(el);
-             return (style.overflowY === 'auto' || style.overflowY === 'scroll') && 
-                    el.scrollHeight > el.clientHeight;
+            const style = window.getComputedStyle(el);
+            return (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                el.scrollHeight > el.clientHeight;
         });
-        
+
         // Sort by height (usually the main list is tall)
         scrollables.sort((a, b) => b.clientHeight - a.clientHeight);
         return scrollables[0];
@@ -288,10 +288,10 @@
         toast.className = `scroller-toast ${type}`;
         toast.innerText = message;
         document.body.appendChild(toast);
-        
+
         // Trigger animation
         setTimeout(() => toast.classList.add('visible'), 10);
-        
+
         // Remove after 3s
         setTimeout(() => {
             toast.classList.remove('visible');
@@ -324,8 +324,10 @@
     }
 
     function stopScrolling() {
+        if (!isScrolling) return; // Already stopped, don't log
+
         console.log('[InstaLogger][Scroller] Stopping scroll...');
-        if (isScrolling) showToast('Auto-Scroll Stopped', 'info');
+        showToast('Auto-Scroll Stopped', 'info');
         isScrolling = false;
         if (scrollInterval) clearTimeout(scrollInterval);
         scrollInterval = null;
@@ -346,7 +348,7 @@
         if (!isScrolling) return;
         // 50ms = 20 ticks per second (ideal)
         // In background, this might throttle to 1000ms (1 tick per second)
-        scrollInterval = setTimeout(performScrollStep, 50); 
+        scrollInterval = setTimeout(performScrollStep, 50);
     }
 
     function performScrollStep() {
@@ -363,41 +365,41 @@
         lastTickTime = now;
 
         // SANITY CHECK: Cap delta time to prevent massive jumps if tab was frozen
-        if (dt > 1500) dt = 1500; 
+        if (dt > 1500) dt = 1500;
 
         // Calculate Pixels
         const pps = PRESETS[settings.speed].pixelsPerSecond;
         const pixels = (pps / 1000) * dt;
-        
+
         scrollAccumulator += pixels;
 
         if (scrollAccumulator >= 1) {
             const step = Math.floor(scrollAccumulator);
             scrollAccumulator -= step;
-            
+
             const currentScroll = container.scrollTop;
             const targetScroll = settings.direction === 'down' ? currentScroll + step : currentScroll - step;
-            
+
             // 1. Perform the Scroll
             container.scrollTop = targetScroll;
-            
+
             // 2. FORCE Event Dispatching to trigger Infinite Scroll
             // We use a variety of events to ensure frameworks (React/Instagram) pick it up.
             const eventOptions = { bubbles: true, cancelable: false, composed: true };
-            
+
             // Standard scroll event
             container.dispatchEvent(new Event('scroll', eventOptions));
-            
+
             // Wheel event (sometimes listened to for user activity)
             container.dispatchEvent(new WheelEvent('wheel', { ...eventOptions, deltaY: settings.direction === 'down' ? step : -step }));
-            
+
             // Touch move simulation (mobile emulation sometimes triggers it)
             container.dispatchEvent(new TouchEvent('touchmove', eventOptions));
 
             // 3. Layout Thrashing (Force Reflow)
             // Reading scrollHeight forces the browser to recalculate layout, 
             // which often triggers IntersectionObservers in background tabs.
-            const _ = container.scrollHeight; 
+            const _ = container.scrollHeight;
         }
 
         requestNextTick();

@@ -14,7 +14,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import sys
 
 # Define scopes required
@@ -47,8 +47,8 @@ def _get_encryption_key():
     # Salt stored locally (not secret, just prevents rainbow tables)
     salt = b'IOL_TOKEN_SALT_v1'
     
-    # Derive key using PBKDF2
-    kdf = PBKDF2(
+    # Derive key using PBKDF2HMAC
+    kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
@@ -145,18 +145,55 @@ class AuthManager:
             print(f"[Auth] Token save failed: {e}")
             raise
 
+    def logout(self):
+        """Sign out by deleting the local token file."""
+        try:
+            if os.path.exists(SECURE_TOKEN_PATH):
+                os.remove(SECURE_TOKEN_PATH)
+            self.creds = None
+            self.user_info = None
+            return True
+        except Exception as e:
+            print(f"[Auth] Logout failed: {e}")
+            return False
+
     def login(self):
         """
         Initiates the Google OAuth 2.0 flow.
         Returns: (user_info_dict, error_message)
         """
-        # 1. Check for client_secret.json
+        # Try to load from .env if file is missing
+        client_config = None
+        
         if not os.path.exists(CREDENTIALS_PATH):
-            return None, f"Missing 'client_secret.json' in {os.path.join(PROJECT_ROOT, 'assets')}. Please download it from Google Cloud Console."
+            # Check for env vars
+            from dotenv import load_dotenv
+            load_dotenv()
+            cid = os.getenv('GOOGLE_CLIENT_ID')
+            csecret = os.getenv('GOOGLE_CLIENT_SECRET')
+            
+            if cid and csecret:
+                client_config = {
+                    "installed": {
+                        "client_id": cid,
+                        "project_id": "instacrm-desktop", # Placeholder
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                        "client_secret": csecret,
+                        "redirect_uris": ["http://localhost"]
+                    }
+                }
+            else:
+                return None, f"Missing 'client_secret.json' in assets/ AND missing GOOGLE_CLIENT_ID/SECRET in .env."
 
         try:
             # 2. Run Flow
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+            if client_config:
+                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+                
             self.creds = flow.run_local_server(port=0, open_browser=True)
             
             # 3. Save Token
@@ -187,6 +224,7 @@ class AuthManager:
             os.remove(TOKEN_PATH)
         self.creds = None
         self.user_info = None
+        return True
 
     def get_authenticated_user(self):
         """

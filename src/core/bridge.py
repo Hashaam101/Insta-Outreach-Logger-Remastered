@@ -13,6 +13,21 @@ import hashlib
 # 1MB max message size
 MAX_MSG_SIZE = 1024 * 1024
 
+# Load .env file from project root (bridge.py is in src/core/, so go up 2 levels)
+_ENV_LOADED = False
+_ENV_PATH = None
+try:
+    from dotenv import load_dotenv
+    # Determine project root based on this file's location
+    _BRIDGE_DIR = os.path.dirname(os.path.abspath(__file__))
+    _PROJECT_ROOT = os.path.abspath(os.path.join(_BRIDGE_DIR, '..', '..'))
+    _ENV_PATH = os.path.join(_PROJECT_ROOT, '.env')
+    if os.path.exists(_ENV_PATH):
+        load_dotenv(_ENV_PATH)
+        _ENV_LOADED = True
+except ImportError:
+    pass  # dotenv not available, rely on system environment
+
 # Import centralized IPC port
 try:
     from version import IPC_PORT
@@ -26,7 +41,7 @@ def _load_ipc_auth_key():
     auth_key_str = os.environ.get('IOL_IPC_AUTH_KEY')
     if not auth_key_str:
         # Fallback for backward compatibility
-        return b"SECRET_IPC_KEY_2024"
+        return b"insta_lead_secret_key"
     return auth_key_str.encode('utf-8')
 
 AUTH_KEY = _load_ipc_auth_key()  # Must match server
@@ -142,6 +157,8 @@ def connect_to_ipc_server():
 
 def main():
     logging.info("Bridge started.")
+    logging.info(f"ENV loaded: {_ENV_LOADED}, ENV path: {_ENV_PATH}")
+    logging.info(f"AUTH_KEY length: {len(AUTH_KEY)}, first 8 chars: {AUTH_KEY[:8]}")
     
     ipc_socket = None
 

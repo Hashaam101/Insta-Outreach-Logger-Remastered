@@ -46,7 +46,10 @@
                 "assets/*.svg",
                 "assets/*.png"
             ],
-            "matches": ["https://*.instagram.com/*"]
+            "matches": [
+                "https://*.instagram.com/*"
+            ]
         }
-    ]
+    ],
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAumiqXiKI+bF/v3JBpPJg9BvADZBD+cXit75ZNGO5qxsDkiT2rmJH8O0ckdS6FMNdJCHGta+02yDCaxAwk/BZxqo75u7RjFPDFYkIuv2hVDMWVHWfSMveGywDeUOipuxoga4Gd00BKiy7s3TSDGdqbluoNthByfI13uBGQOxu5wgSkwfQMcXoX7AMc05Fsq4A1HJH1WBEmyrVuH+oxsdEx7S/7MPm9s42LvhmT9l4MeCs1R/6HFRaWiC3sKi0okcxrUnSvoy4s8OiEwM+OD6EJ7JPVgZay6hgQuaKF3UUHavWgStVA4vc1UC7QksLqJ36qbf+2XLQLGo531TJk51OPQIDAQAB"
 }

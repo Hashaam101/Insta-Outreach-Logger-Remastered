@@ -230,18 +230,66 @@ class DatabaseManager:
                          res = cursor.fetchone()
                          opr_id = res[0] if res else 'UNKNOWN'
 
+                    # Format timestamp to match Oracle's expected format (6 fractional digits)
+                    # Python's isoformat() can produce variable fractional seconds
+                    created_at_str = event['created_at']
+                    if 'T' in created_at_str and '.' in created_at_str:
+                        # Ensure exactly 6 fractional digits
+                        parts = created_at_str.split('.')
+                        if len(parts) == 2:
+                            base = parts[0]
+                            frac_and_tz = parts[1]
+                            # Extract fractional part (before Z or +/-)
+                            if 'Z' in frac_and_tz:
+                                frac = frac_and_tz.split('Z')[0]
+                                tz = 'Z'
+                            elif '+' in frac_and_tz:
+                                frac = frac_and_tz.split('+')[0]
+                                tz = '+' + frac_and_tz.split('+')[1]
+                            elif '-' in frac_and_tz:
+                                frac = frac_and_tz.split('-')[0]
+                                tz = '-' + frac_and_tz.split('-')[1]
+                            else:
+                                frac = frac_and_tz
+                                tz = ''
+                            # Pad or truncate to 6 digits
+                            frac = (frac + '000000')[:6]
+                            # Always use Z regardless of input timezone
+                            created_at_str = f"{base}.{frac}Z"
+                    
                     cursor.execute("""
                         INSERT INTO EVENT_LOGS (ELG_ID, EVENT_TYPE, ACT_ID, OPR_ID, TAR_ID, DETAILS, CREATED_AT)
-                        VALUES (:1, :2, :3, :4, :5, :6, TO_TIMESTAMP(:7, 'YYYY-MM-DD"T"HH24:MI:SS.FF"Z"'))
-                    """, [elg_id, event['event_type'], act_id, opr_id, tar_id, event['details'], event['created_at']])
+                        VALUES (:1, :2, :3, :4, :5, :6, TO_TIMESTAMP(:7, 'YYYY-MM-DD"T"HH24:MI:SS.FF6"Z"'))
+                    """, [elg_id, event['event_type'], act_id, opr_id, tar_id, event['details'], created_at_str])
 
                     # 3. Insert Outreach Log (if applicable)
                     if event.get('message_text'):
                         olg_id = f"OLG-{int(time.time()*1000):X}"
+                        
+                        # Format sent_at timestamp
+                        sent_at_str = event['sent_at']
+                        if 'T' in sent_at_str and '.' in sent_at_str:
+                            parts = sent_at_str.split('.')
+                            if len(parts) == 2:
+                                base = parts[0]
+                                frac_and_tz = parts[1]
+                                if 'Z' in frac_and_tz:
+                                    frac = frac_and_tz.split('Z')[0]
+                                    tz = 'Z'
+                                elif '+' in frac_and_tz:
+                                    frac = frac_and_tz.split('+')[0]
+                                    tz = '+' + frac_and_tz.split('+')[1]
+                                else:
+                                    frac = frac_and_tz
+                                    tz = ''
+                                frac = (frac + '000000')[:6]
+                                # Always use Z regardless of input timezone
+                                sent_at_str = f"{base}.{frac}Z"
+                        
                         cursor.execute("""
                             INSERT INTO OUTREACH_LOGS (OLG_ID, ELG_ID, MESSAGE_TEXT, SENT_AT)
-                            VALUES (:1, :2, :3, TO_TIMESTAMP(:4, 'YYYY-MM-DD"T"HH24:MI:SS.FF"Z"'))
-                        """, [olg_id, elg_id, event['message_text'], event['sent_at']])
+                            VALUES (:1, :2, :3, TO_TIMESTAMP(:4, 'YYYY-MM-DD"T"HH24:MI:SS.FF6"Z"'))
+                        """, [olg_id, elg_id, event['message_text'], sent_at_str])
 
                     mapping[event['id']] = {'elg_id': elg_id, 'tar_id': tar_id, 'target_username': tar_username}
                 

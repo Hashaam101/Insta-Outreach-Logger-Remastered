@@ -40,11 +40,22 @@ USER_PREFS_PATH = os.path.join(project_root, 'user_preferences.json')
 UPDATE_CONFIG_PATH = os.path.join(project_root, 'update_config.json')
 
 class StdoutRedirector:
-    def __init__(self, text_queue):
+    def __init__(self, text_queue, original_stream):
         self.text_queue = text_queue
+        self.original_stream = original_stream
+        
     def write(self, string):
-        if string: self.text_queue.put(string)
-    def flush(self): pass
+        if string:
+            self.text_queue.put(string)
+            try:
+                self.original_stream.write(string)
+                self.original_stream.flush()
+            except: pass
+            
+    def flush(self):
+        try:
+            self.original_stream.flush()
+        except: pass
 
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent):
@@ -186,10 +197,19 @@ class StatCard(ctk.CTkFrame):
         self.lbl_value.configure(text=str(value))
 
 class AppUI(ctk.CTk):
-    def __init__(self):
+    def __init__(self, launcher=None):
         super().__init__()
+        self.launcher = launcher  # Store launcher instance
         self.title(f"InstaCRM Desktop Agent v{VERSION}")
-        self.geometry("1200x750")
+        self.geometry("1400x850")
+        self.configure(fg_color="#0F0E13")  # Match Welcome Window background
+        
+        # Set window icon
+        try:
+            icon_path = os.path.join(project_root, 'assets', 'logo.ico')
+            if os.path.exists(icon_path):
+                self.iconbitmap(icon_path)
+        except: pass
         
         # State
         self.auth_manager = AuthManager()
@@ -197,7 +217,7 @@ class AppUI(ctk.CTk):
         try:
             self.db_manager = DatabaseManager()
         except Exception:
-            pass # Will prompt for setup later if missing
+            pass 
 
         self.user_info = None
         self.operator_data = None
@@ -215,28 +235,305 @@ class AppUI(ctk.CTk):
         # Redirects
         self.original_stdout = sys.stdout
         self.original_stderr = sys.stderr
-        sys.stdout = StdoutRedirector(self.log_queue)
-        sys.stderr = StdoutRedirector(self.log_queue)
+        sys.stdout = StdoutRedirector(self.log_queue, self.original_stdout)
+        sys.stderr = StdoutRedirector(self.log_queue, self.original_stderr)
 
-        # Initial View
+        # Initialize Modern UI
+        self._init_ui()
+
+        # Start session check
+        self.after(500, self._check_session)
+
+    def _init_ui(self):
+        # Main grid layout
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-        
-        self.container = ctk.CTkFrame(self, fg_color="transparent")
-        self.container.grid(row=0, column=0, sticky="nsew")
-        self.container.grid_columnconfigure(0, weight=1)
-        self.container.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
-        self._check_session()
+        # 1. HEADER BAR (like Welcome Window)
+        self.header_bar = ctk.CTkFrame(self, fg_color="#1a1b26", height=100, corner_radius=0)
+        self.header_bar.grid(row=0, column=0, sticky="ew")
+        self.header_bar.grid_propagate(False)
+        
+        header_container = ctk.CTkFrame(self.header_bar, fg_color="transparent")
+        header_container.pack(fill="x", padx=40, pady=25)
+        
+        # App Title & Version (Left)
+        title_frame = ctk.CTkFrame(header_container, fg_color="transparent")
+        title_frame.pack(side="left")
+        
+        ctk.CTkLabel(
+            title_frame,
+            text="INSTA OUTREACH LOGGER (REMASTERED)",
+            font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
+            text_color="#7C3AED"  # Purple accent
+        ).pack(anchor="w")
+        
+        ctk.CTkLabel(
+            title_frame,
+            text=f"REMASTERED | v{VERSION}",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color="#565f89"
+        ).pack(anchor="w")
+        
+        # User Profile Badge (Right)
+        self.profile_frame = ctk.CTkFrame(header_container, fg_color="#24283b", corner_radius=8, border_width=1, border_color="#414868")
+        self.profile_frame.pack(side="right")
+        
+        icon_lbl = ctk.CTkLabel(self.profile_frame, text="🦁", font=ctk.CTkFont(size=24))
+        icon_lbl.pack(side="left", padx=(15, 10), pady=5)
+        
+        profile_info = ctk.CTkFrame(self.profile_frame, fg_color="transparent")
+        profile_info.pack(side="left", padx=(0, 20), pady=5)
+        
+        self.profile_name_lbl = ctk.CTkLabel(
+            profile_info,
+            text="LOADING...",
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
+            text_color="#c0caf5"
+        )
+        self.profile_name_lbl.pack(anchor="w")
+        
+        self.profile_email_lbl = ctk.CTkLabel(
+            profile_info,
+            text="No Email",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color="#565f89"
+        )
+        self.profile_email_lbl.pack(anchor="w")
+
+        # Sign Out Button
+        self.sign_out_btn = ctk.CTkButton(
+            self.profile_frame,
+            text="Sign Out",
+            font=ctk.CTkFont(size=12),
+            width=60,
+            height=24,
+            fg_color="#332d41",
+            hover_color="#ef4444",
+            command=self._handle_sign_out
+        )
+        self.sign_out_btn.pack(side="left", padx=(10, 15))
+
+        # 2. MAIN CONTENT AREA
+        self.content_area = ctk.CTkFrame(self, fg_color="transparent")
+        self.content_area.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+        self.content_area.grid_columnconfigure(0, weight=1)
+        self.content_area.grid_rowconfigure(0, weight=1)
+
+    def _update_profile_display(self):
+        """Update header profile badge with user info"""
+        if self.user_info:
+            name = self.user_info.get('name', 'Unknown')
+            email = self.user_info.get('email', 'No Email')
+            self.profile_name_lbl.configure(text=name.upper())
+            self.profile_email_lbl.configure(text=email)
+        elif self.operator_data:
+            # Handle both uppercase (legacy) and lowercase (standard) keys
+            name = self.operator_data.get('operator_name') or self.operator_data.get('OPR_NAME') or 'Unknown'
+            email = self.operator_data.get('operator_email') or self.operator_data.get('OPR_EMAIL') or 'No Email'
+            self.profile_name_lbl.configure(text=name.upper())
+            self.profile_email_lbl.configure(text=email)
+
+    def _update_status_indicator(self, connected: bool):
+        """Update connection status visual feedback"""
+        # Update control card border color if it exists
+        if hasattr(self, 'control_card'):
+            color = "#10b981" if connected else "#ef4444"  # Green if connected, red if not
+            self.control_card.configure(border_color=color)
 
     def _check_session(self):
-        """Check for existing valid session."""
+        """Check if user is authenticated and show appropriate view"""
+        # Load operator config
+        config_path = os.path.join(project_root, 'operator_config.json')
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    self.operator_data = json.load(f)
+            except: pass
+        
+        # Check auth using correct method
         user = self.auth_manager.get_authenticated_user()
         if user:
             self.user_info = user
-            self._verify_operator_status()
+            # Go directly to dashboard
+            self._show_dashboard()
         else:
-            self._show_login_screen()
+            self._show_welcome_launcher()
+
+    def _handle_sign_out(self):
+        """Handle sign out request."""
+        if messagebox.askyesno("Sign Out", "Are you sure you want to sign out?"):
+            if self.auth_manager.logout():
+                # Stop server if running
+                if self.server:
+                    self._stop_server()
+                
+                # Reset UI state
+                self.user_info = None
+                self.operator_data = None
+                
+                # Return to welcome screen
+                for widget in self.winfo_children():
+                    widget.destroy()
+                self._init_ui()
+                self._show_welcome_launcher()
+            else:
+                messagebox.showerror("Error", "Failed to sign out. Please try manually deleting the token file.")
+
+    def _show_welcome_launcher(self):
+        """Show unified welcome/launcher screen (like Welcome Window)"""
+        for widget in self.content_area.winfo_children():
+            widget.destroy()
+        
+        # Update profile
+        self._update_profile_display()
+        
+        # Center content
+        self.content_area.grid_columnconfigure(0, weight=2)
+        self.content_area.grid_columnconfigure(1, weight=1)
+        self.content_area.grid_rowconfigure(0, weight=1)
+        
+        # LEFT COLUMN (Main Action)
+        main_col = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        main_col.grid(row=0, column=0, sticky="nsew", padx=(40, 20), pady=40)
+        
+        # System Status Card
+        status_card = ctk.CTkFrame(main_col, fg_color="#16161e", corner_radius=12, border_width=1, border_color="#7C3AED")
+        status_card.pack(fill="x", pady=(0, 20), ipady=15)
+        
+        ctk.CTkLabel(
+            status_card,
+            text="SYSTEM STATUS",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color="#565f89"
+        ).pack(anchor="w", padx=20, pady=(10, 5))
+        
+        status_row = ctk.CTkFrame(status_card, fg_color="transparent")
+        status_row.pack(fill="x", padx=20)
+        
+        self.status_indicator = ctk.CTkLabel(status_row, text="●", font=ctk.CTkFont(size=24), text_color="#22c55e")
+        self.status_indicator.pack(side="left")
+        
+        self.status_label = ctk.CTkLabel(
+            status_row,
+            text="System is up to date",
+            font=ctk.CTkFont(family="Segoe UI", size=16),
+            text_color="#a9b1d6"
+        )
+        self.status_label.pack(side="left", padx=10)
+
+        # Update Button (Hidden by default)
+        self.btn_update = ctk.CTkButton(
+            status_row,
+            text="UPDATE AVAILABLE",
+            command=self._perform_update,
+            fg_color="#f59e0b",
+            hover_color="#d97706",
+            text_color="white",
+            font=ctk.CTkFont(weight="bold")
+        )
+        
+        # Check for updates if launcher is available
+        if self.launcher:
+            threading.Thread(target=self._check_updates, daemon=True).start()
+        
+        # Hero Button - Initialize Logger
+        start_btn = ctk.CTkButton(
+            main_col,
+            text="INITIALIZE LOGGER",
+            command=self._initialize_agent,
+            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+            fg_color="#7C3AED",
+            hover_color="#6D28D9",
+            height=100,
+            corner_radius=12,
+            border_width=2,
+            border_color="#8B5CF6"
+        )
+        start_btn.pack(fill="x")
+        
+        # RIGHT COLUMN (Quick Actions)
+        side_col = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        side_col.grid(row=0, column=1, sticky="nsew", padx=(20, 40), pady=40)
+        
+        ctk.CTkLabel(
+            side_col,
+            text="QUICK ACTIONS",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color="#565f89"
+        ).pack(anchor="w", pady=(0, 10))
+        
+        # Quick action buttons
+        self._create_action_btn(side_col, "⚙️  Reconfigure", self.run_setup_gui)
+        self._create_action_btn(side_col, "🧩  Extension ID", self._show_extension_info)
+        self._create_action_btn(side_col, "📂  Open Logs", self._open_logs)
+        
+        # Footer
+        footer = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        footer.grid(row=1, column=0, columnspan=2, sticky="ew", padx=40, pady=(0, 20))
+        
+        ctk.CTkLabel(
+            footer,
+            text="Insta Outreach Logger - Secure Environment",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color="#565f89"
+        ).pack(side="left")
+        
+        ctk.CTkLabel(
+            footer,
+            text="Need help? Contact Admin.",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color="#7C3AED",
+            cursor="hand2"
+        ).pack(side="right")
+    
+    def _initialize_agent(self):
+        """Transition from welcome screen to agent dashboard"""
+        self._show_dashboard()
+        # Auto-start the service
+        self.after(500, self.start_service)
+        
+    def _check_updates(self):
+        """Check for updates using launcher instance"""
+        if not self.launcher: return
+        try:
+            self.after(0, lambda: self.status_label.configure(text="Checking for updates..."))
+            update_avail, ver, url = self.launcher.check_for_updates()
+            self.after(0, lambda: self._update_status(update_avail, ver, url))
+        except Exception as e:
+            print(f"[UI] Update check failed: {e}")
+            self.after(0, lambda: self.status_label.configure(text="System Ready (Update Check Failed)", text_color="#ef4444"))
+
+    def _update_status(self, avail, ver, url):
+        if avail:
+            self.update_available = True
+            self.new_version = ver
+            self.download_url = url
+            self.status_label.configure(text=f"Update Available: v{ver}", text_color="#f59e0b")
+            self.status_indicator.configure(text_color="#f59e0b")
+            self.btn_update.pack(side="right", padx=10)
+        else:
+            self.status_label.configure(text="System is up to date", text_color="#a9b1d6")
+            self.status_indicator.configure(text_color="#22c55e")
+
+    def _perform_update(self):
+        if self.launcher and self.download_url:
+            self.status_label.configure(text="Downloading Update...", text_color="#3b82f6")
+            self.btn_update.configure(state="disabled")
+            
+            def run_update():
+                path = self.launcher.download_update(self.download_url, self.new_version)
+                if path:
+                    self.launcher.apply_update(path)
+                else:
+                    self.after(0, lambda: self.status_label.configure(text="Update Download Failed", text_color="#ef4444"))
+                    
+            threading.Thread(target=run_update, daemon=True).start()
+    
+    def _show_extension_info(self):
+        """Show extension ID info dialog"""
+        ext_id = "Your Extension ID: Check chrome://extensions"
+        messagebox.showinfo("Extension ID", ext_id)
 
     def _verify_operator_status(self):
         """Check if email exists in Oracle."""
@@ -246,7 +543,7 @@ class AppUI(ctk.CTk):
             self.after(2000, self._check_session) # Retry after some time
             return
 
-        self._clear_container()
+        self._clear_content()
         lbl = ctk.CTkLabel(self.container, text="Verifying Identity...", font=ctk.CTkFont(size=20))
         lbl.grid(row=0, column=0)
         
@@ -272,114 +569,240 @@ class AppUI(ctk.CTk):
 
     # --- VIEWS ---
 
-    def _clear_container(self):
-        for widget in self.container.winfo_children():
-            widget.destroy()
+    def _clear_content(self):
+        if hasattr(self, 'content_area'):
+            for widget in self.content_area.winfo_children():
+                widget.destroy()
 
     def _show_login_screen(self):
-        self._clear_container()
-        frame = ctk.CTkFrame(self.container, fg_color=COLOR_CARD, corner_radius=20)
+        self._clear_content()
+        # Ensure we are full screen in content area
+        frame = ctk.CTkFrame(self.content_area, fg_color="#1a1a1a", corner_radius=20)
         frame.place(relx=0.5, rely=0.5, anchor="center")
-        ctk.CTkLabel(frame, text="InstaCRM Ecosystem", font=ctk.CTkFont(size=28, weight="bold")).pack(padx=60, pady=(40, 10))
-        ctk.CTkLabel(frame, text="Secure Agent Access", font=ctk.CTkFont(size=14), text_color=COLOR_TEXT_MUTED).pack(pady=(0, 30))
+        
+        ctk.CTkLabel(frame, text="InstaCRM Ecosystem", font=ctk.CTkFont(size=28, weight="bold", family="Inter")).pack(padx=60, pady=(40, 10))
+        ctk.CTkLabel(frame, text="Secure Agent Access", font=ctk.CTkFont(size=14, family="Inter"), text_color="#9ca3af").pack(pady=(0, 30))
+        
         btn_login = ctk.CTkButton(frame, text="Sign in with Google", command=self._handle_login, height=50, width=280, 
-                                  font=ctk.CTkFont(size=15, weight="bold"), fg_color=COLOR_PRIMARY)
+                                  font=ctk.CTkFont(size=15, weight="bold", family="Inter"), fg_color="#3b82f6")
         btn_login.pack(padx=60, pady=(0, 20))
         
-        ctk.CTkButton(frame, text="Run Technical Setup", command=self.run_setup_gui, fg_color="transparent", text_color=COLOR_TEXT_MUTED, border_width=1).pack(pady=(0, 40))
+        ctk.CTkButton(frame, text="Run Technical Setup", command=self.run_setup_gui, fg_color="transparent", text_color="#6b7280", border_width=1).pack(pady=(0, 40))
 
     def _show_onboarding(self):
-        self._clear_container()
-        frame = ctk.CTkFrame(self.container, fg_color=COLOR_CARD, corner_radius=20)
+        self._clear_content()
+        frame = ctk.CTkFrame(self.content_area, fg_color="#1a1a1a", corner_radius=20)
         frame.place(relx=0.5, rely=0.5, anchor="center")
-        ctk.CTkLabel(frame, text="Establish Identity", font=ctk.CTkFont(size=24, weight="bold")).pack(padx=40, pady=(30, 10))
-        ctk.CTkLabel(frame, text=f"Linking: {self.user_info['email']}", text_color=COLOR_TEXT_MUTED).pack(pady=(0, 20))
+        
+        ctk.CTkLabel(frame, text="Establish Identity", font=ctk.CTkFont(size=24, weight="bold", family="Inter")).pack(padx=40, pady=(30, 10))
+        ctk.CTkLabel(frame, text=f"Linking: {self.user_info['email']}", text_color="#9ca3af").pack(pady=(0, 20))
         
         self.entry_name = ctk.CTkEntry(frame, placeholder_text="Choose Operator Name", width=300, height=40)
         self.entry_name.pack(padx=40, pady=10)
         self.entry_name.insert(0, self.user_info.get('name', ''))
         
-        btn_confirm = ctk.CTkButton(frame, text="Confirm Identity", command=self._handle_onboarding, height=45, width=300, fg_color=COLOR_SUCCESS)
+        btn_confirm = ctk.CTkButton(frame, text="Confirm Identity", command=self._handle_onboarding, height=45, width=300, fg_color="#10b981")
         btn_confirm.pack(padx=40, pady=(20, 10))
 
-        ctk.CTkButton(frame, text="Open Extension Folder", command=self.open_extension_folder, fg_color="transparent", text_color=COLOR_PRIMARY).pack(pady=(0, 30))
+        ctk.CTkButton(frame, text="Open Extension Folder", command=self.open_extension_folder, fg_color="transparent", text_color="#3b82f6").pack(pady=(0, 30))
 
     def _show_dashboard(self):
-        self._clear_container()
-        self.container.grid_columnconfigure(1, weight=1)
-        self.container.grid_rowconfigure(0, weight=1)
-        self._create_sidebar()
-        self._create_dashboard_content()
+        # Clear main content only
+        for widget in self.content_area.winfo_children():
+            widget.destroy()
+        
+        # Update profile display
+        self._update_profile_display()
+        
+        # Ensure main view grid
+        self.content_area.grid_columnconfigure(0, weight=2)
+        self.content_area.grid_columnconfigure(1, weight=1)
+        self.content_area.grid_rowconfigure(0, weight=1)
+        
+        # LEFT COLUMN (Main Content)
+        main_col = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        main_col.grid(row=0, column=0, sticky="nsew", padx=(40, 20), pady=20)
+        
+        # Control Card (Status + Buttons)
+        self.control_card = ctk.CTkFrame(main_col, fg_color="#16161e", corner_radius=12, border_width=2, border_color="#ef4444")  # Start with red (disconnected)
+        self.control_card.pack(fill="x", pady=(0, 20))
+        
+        # Control Header
+        ctk.CTkLabel(
+            self.control_card,
+            text="AGENT CONTROL",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color="#565f89"
+        ).pack(anchor="w", padx=20, pady=(15, 5))
+        
+        # Control Buttons Row
+        btn_row = ctk.CTkFrame(self.control_card, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=(0, 15))
+        
+        self.btn_start = ctk.CTkButton(
+            btn_row,
+            text="▶ START AGENT",
+            command=self.start_service,
+            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
+            fg_color="#7C3AED",
+            hover_color="#6D28D9",
+            height=60,
+            corner_radius=8,
+            border_width=2,
+            border_color="#8B5CF6"
+        )
+        self.btn_start.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        self.btn_stop = ctk.CTkButton(
+            btn_row,
+            text="⏹ STOP",
+            command=self.stop_service,
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
+            fg_color="#24283b",
+            hover_color="#ef4444",
+            height=60,
+            corner_radius=8,
+            state="disabled"
+        )
+        self.btn_stop.pack(side="left", fill="x", expand=True)
+        
+        # Session Timer
+        timer_frame = ctk.CTkFrame(self.control_card, fg_color="transparent")
+        timer_frame.pack(fill="x", padx=20, pady=(0, 15))
+        
+        ctk.CTkLabel(
+            timer_frame,
+            text="SESSION TIME",
+            font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"),
+            text_color="#565f89"
+        ).pack(side="left")
+        
+        self.lbl_timer = ctk.CTkLabel(
+            timer_frame,
+            text="00:00:00",
+            font=ctk.CTkFont(family="Consolas", size=16, weight="bold"),
+            text_color="#c0caf5"
+        )
+        self.lbl_timer.pack(side="right")
+        
+        # Stats Grid
+        stats_label = ctk.CTkLabel(
+            main_col,
+            text="METRICS",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color="#565f89"
+        )
+        stats_label.pack(anchor="w", pady=(0, 10))
+        
+        stats_grid = ctk.CTkFrame(main_col, fg_color="transparent")
+        stats_grid.pack(fill="both", expand=True)
+        stats_grid.grid_columnconfigure((0, 1), weight=1)
+        stats_grid.grid_rowconfigure((0, 1), weight=1)
+        
+        # Stat Cards (Welcome Window style)
+        self.card_outreach = self._create_stat_card(stats_grid, "OUTREACH SENT", "0", "#7C3AED")
+        self.card_outreach.grid(row=0, column=0, padx=(0, 10), pady=(0, 10), sticky="nsew")
+        
+        self.card_scraped = self._create_stat_card(stats_grid, "PROFILES SCRAPED", "0", "#8b5cf6")
+        self.card_scraped.grid(row=0, column=1, padx=(10, 0), pady=(0, 10), sticky="nsew")
+        
+        self.card_enriched = self._create_stat_card(stats_grid, "LEADS ENRICHED", "0", "#10b981")
+        self.card_enriched.grid(row=1, column=0, padx=(0, 10), pady=(10, 0), sticky="nsew")
+        
+        self.card_safety = self._create_stat_card(stats_grid, "SAFETY ALERTS", "0", "#f59e0b")
+        self.card_safety.grid(row=1, column=1, padx=(10, 0), pady=(10, 0), sticky="nsew")
+        
+        # RIGHT COLUMN (Console + Actions)
+        side_col = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        side_col.grid(row=0, column=1, sticky="nsew", padx=(20, 40), pady=20)
+        
+        # Quick Actions Header
+        ctk.CTkLabel(
+            side_col,
+            text="QUICK ACTIONS",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color="#565f89"
+        ).pack(anchor="w", pady=(0, 10))
+        
+        # Action Buttons
+        self._create_action_btn(side_col, "⚙️  Settings", self.open_settings)
+        self._create_action_btn(side_col, "📂  View Logs", self._open_logs)
+        self._create_action_btn(side_col, "🔧  Setup Wizard", self.run_setup_gui)
+        
+        # Console
+        ctk.CTkLabel(
+            side_col,
+            text="LIVE CONSOLE",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color="#565f89"
+        ).pack(anchor="w", pady=(20, 10))
+        
+        self.console_box = ctk.CTkTextbox(
+            side_col,
+            font=("Consolas", 11),
+            bg_color="#0F0E13",
+            fg_color="#16161e",
+            text_color="#00ff00",
+            border_width=1,
+            border_color="#414868",
+            corner_radius=8
+        )
+        self.console_box.pack(fill="both", expand=True)
+        self.console_box.insert("0.0", f"[SYSTEM] {datetime.now().strftime('%H:%M:%S')} - Agent Ready.\n")
+        self.console_box.configure(state="disabled")
+        
         self.after(100, self._update_loop)
         self.after(1000, self._session_monitor_loop)
 
-    def _create_sidebar(self):
-        sidebar = ctk.CTkFrame(self.container, width=220, corner_radius=0, fg_color=COLOR_BG)
-        sidebar.grid(row=0, column=0, sticky="nsew")
-        sidebar.grid_rowconfigure(10, weight=1)
-
-        ctk.CTkLabel(sidebar, text="InstaCRM", font=ctk.CTkFont(size=24, weight="bold")).grid(row=0, column=0, padx=20, pady=(30, 5))
-        ctk.CTkLabel(sidebar, text=f"OP: {self.operator_data['OPR_NAME'][:15]}", font=ctk.CTkFont(size=12, weight="bold"), text_color=COLOR_PRIMARY).grid(row=1, column=0, padx=20, pady=(0, 30))
-
-        self.btn_start = ctk.CTkButton(sidebar, text="CONNECT AGENT", command=self.start_service, fg_color=COLOR_SUCCESS, hover_color="#059669")
-        self.btn_start.grid(row=2, column=0, padx=20, pady=10)
-
-        self.lbl_sync_status = ctk.CTkLabel(sidebar, text="SYNC: --", font=ctk.CTkFont(size=10, weight="bold"), text_color="#666666")
-        self.lbl_sync_status.grid(row=3, column=0, padx=20, pady=(0, 10))
-
-        self.btn_stop = ctk.CTkButton(sidebar, text="DISCONNECT", command=self.stop_service, fg_color=COLOR_CARD, hover_color=COLOR_DANGER, state="disabled")
-        self.btn_stop.grid(row=4, column=0, padx=20, pady=10)
-
-        ctk.CTkLabel(sidebar, text="TOOLS", text_color=COLOR_TEXT_MUTED, font=ctk.CTkFont(size=10)).grid(row=4, column=0, padx=20, pady=(20, 5), sticky="w")
-
-        self.btn_sync = ctk.CTkButton(sidebar, text="Force Cloud Sync", command=self.sync_now, fg_color=COLOR_CARD, hover_color="#334155")
-        self.btn_sync.grid(row=5, column=0, padx=20, pady=5)
+    def _create_stat_card(self, parent, title, value, accent_color):
+        """Create a stat card matching Welcome Window style"""
+        card = ctk.CTkFrame(parent, fg_color="#24283b", corner_radius=8, border_width=1, border_color="#414868")
         
-        self.btn_settings = ctk.CTkButton(sidebar, text="Automation Settings", command=self.open_settings, fg_color=COLOR_CARD, hover_color="#334155")
-        self.btn_settings.grid(row=6, column=0, padx=20, pady=5)
-
-        ctk.CTkButton(sidebar, text="Open Extension Dir", command=self.open_extension_folder, fg_color=COLOR_CARD, hover_color="#334155").grid(row=7, column=0, padx=20, pady=5)
-        ctk.CTkButton(sidebar, text="Setup Wizard", command=self.run_setup_gui, fg_color=COLOR_CARD, hover_color="#334155").grid(row=8, column=0, padx=20, pady=5)
-
-        # Support Section
-        ctk.CTkLabel(sidebar, text="SUPPORT", text_color=COLOR_TEXT_MUTED, font=ctk.CTkFont(size=10)).grid(row=9, column=0, padx=20, pady=(20, 5), sticky="w")
+        # Title
+        ctk.CTkLabel(
+            card,
+            text=title,
+            font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"),
+            text_color="#565f89"
+        ).pack(anchor="w", padx=15, pady=(12, 5))
         
-        ctk.CTkButton(sidebar, text="View Logs", command=self._open_logs, fg_color=COLOR_CARD, hover_color="#334155").grid(row=10, column=0, padx=20, pady=5)
-        ctk.CTkButton(sidebar, text="Report Issue", command=self._open_support, fg_color=COLOR_CARD, hover_color="#334155").grid(row=11, column=0, padx=20, pady=5)
-
-        ctk.CTkButton(sidebar, text="Log Out", command=self._handle_logout, fg_color="transparent", border_width=1, text_color=COLOR_TEXT_MUTED).grid(row=12, column=0, padx=20, pady=20, sticky="s")
-
-    def _create_dashboard_content(self):
-        main = ctk.CTkFrame(self.container, fg_color="transparent")
-        main.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
-        main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(3, weight=1)
-
-        bar = ctk.CTkFrame(main, fg_color=COLOR_CARD, height=60, corner_radius=10)
-        bar.grid(row=0, column=0, sticky="ew", pady=(0, 20))
-        self.lbl_actor = ctk.CTkLabel(bar, text="ACTIVE ACTOR: --", font=ctk.CTkFont(size=14, weight="bold"))
-        self.lbl_actor.pack(side="left", padx=20, pady=15)
-        self.lbl_timer = ctk.CTkLabel(bar, text="SESSION: 00:00:00", font=ctk.CTkFont(family="Consolas", size=14))
-        self.lbl_timer.pack(side="right", padx=20, pady=15)
-
-        grid = ctk.CTkFrame(main, fg_color="transparent")
-        grid.grid(row=1, column=0, sticky="ew", pady=(0, 20))
-        grid.grid_columnconfigure((0,1,2,3), weight=1)
+        # Value
+        value_lbl = ctk.CTkLabel(
+            card,
+            text=value,
+            font=ctk.CTkFont(family="Segoe UI", size=32, weight="bold"),
+            text_color="#c0caf5"
+        )
+        value_lbl.pack(anchor="w", padx=15, pady=(0, 5))
         
-        self.card_outreach = StatCard(grid, "Outreach Sent", color=COLOR_PRIMARY)
-        self.card_outreach.grid(row=0, column=0, padx=(0, 10), sticky="ew")
-        self.card_scraped = StatCard(grid, "Profiles Scraped", color="#8b5cf6")
-        self.card_scraped.grid(row=0, column=1, padx=10, sticky="ew")
-        self.card_enriched = StatCard(grid, "Leads Enriched", color=COLOR_SUCCESS)
-        self.card_enriched.grid(row=0, column=2, padx=10, sticky="ew")
-        self.card_safety = StatCard(grid, "Safety Alerts", color=COLOR_WARNING)
-        self.card_safety.grid(row=0, column=3, padx=(10, 0), sticky="ew")
+        # Accent bar
+        accent_bar = ctk.CTkFrame(card, fg_color=accent_color, height=3, corner_radius=2)
+        accent_bar.pack(fill="x", padx=15, pady=(0, 12))
+        
+        # Store value label for updates
+        card.value_lbl = value_lbl
+        card.update_value = lambda v: value_lbl.configure(text=str(v))
+        
+        return card
+    
+    def _create_action_btn(self, parent, text, command):
+        """Create action button matching Welcome Window style"""
+        btn = ctk.CTkButton(
+            parent,
+            text=text,
+            command=command,
+            fg_color="#24283b",
+            hover_color="#414868",
+            height=45,
+            anchor="w",
+            corner_radius=8,
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            text_color="#c0caf5"
+        )
+        btn.pack(fill="x", pady=(0, 8))
 
-        self.feed_box = ctk.CTkTextbox(main, font=("Consolas", 12), activate_scrollbars=True)
-        self.feed_box.grid(row=3, column=0, sticky="nsew")
-        self.feed_box.configure(state="disabled")
-
-    # --- SUPPORT ACTIONS ---
+    # --- REMOVE OLD SIDEBAR & CONTENT METHODS ---
+    # (The old _create_sidebar and _create_dashboard_content are replaced by _show_dashboard and _init_ui)
 
     def _open_logs(self):
         log_dir = LOG_DIR
@@ -439,16 +862,16 @@ class AppUI(ctk.CTk):
     def start_service(self):
         if self.is_running: return
         self.log_to_feed("Initializing Agent...", "SYSTEM")
-        self.btn_start.configure(state="disabled", fg_color=COLOR_CARD)
-        self.btn_stop.configure(state="normal", fg_color=COLOR_DANGER)
-        self.btn_sync.configure(state="normal")
-        self.lbl_sync_status.configure(text="SYNC: STARTING...", text_color="#f59e0b")
+        self.btn_start.configure(state="disabled", fg_color="#374151")
+        self.btn_stop.configure(state="normal", fg_color="#ef4444")
+        
         self.start_time = datetime.now()
         try:
             self.server = IPCServer()
             self.is_running = True
             self.server_thread = threading.Thread(target=self._run_server, daemon=True)
             self.server_thread.start()
+            self._update_status_indicator(True)
         except Exception as e:
             messagebox.showerror("Startup Error", str(e))
             self.stop_service()
@@ -458,17 +881,16 @@ class AppUI(ctk.CTk):
         self.log_to_feed("Stopping services...", "SYSTEM")
         if self.server: threading.Thread(target=self.server.stop, daemon=True).start()
         self.is_running = False
-        self.btn_start.configure(state="normal", fg_color=COLOR_SUCCESS)
-        self.btn_stop.configure(state="disabled", fg_color=COLOR_CARD)
-        self.btn_sync.configure(state="disabled")
-        self.lbl_sync_status.configure(text="SYNC: --", text_color="#666666")
-        self.lbl_actor.configure(text="ACTIVE ACTOR: --")
-        self.lbl_timer.configure(text="SESSION: 00:00:00")
+        self.btn_start.configure(state="normal", fg_color="#10b981")
+        self.btn_stop.configure(state="disabled", fg_color="#374151")
+        self._update_status_indicator(False)
+
+        if hasattr(self, 'lbl_timer'):
+            self.lbl_timer.configure(text="00:00:00")
 
     def sync_now(self):
         if self.server and self.server.sync_engine:
             self.server.sync_engine.trigger_sync()
-            self.lbl_sync_status.configure(text="SYNC: PUSHING...", text_color="#f59e0b")
             self.log_to_feed("Manual Sync Triggered", "SYNC")
 
     def _run_server(self):
@@ -479,10 +901,8 @@ class AppUI(ctk.CTk):
     def _session_monitor_loop(self):
         if self.is_running and self.start_time:
             delta = datetime.now() - self.start_time
-            self.lbl_timer.configure(text=f"SESSION: {str(delta).split('.')[0]}")
-            if self.server and self.server.session_state:
-                actor = self.server.session_state.get("last_active_actor")
-                if actor: self.lbl_actor.configure(text=f"ACTIVE ACTOR: @{actor.upper()}")
+            if hasattr(self, 'lbl_timer'):
+                self.lbl_timer.configure(text=str(delta).split('.')[0])
         self.after(1000, self._session_monitor_loop)
 
     def _update_loop(self):
@@ -496,35 +916,29 @@ class AppUI(ctk.CTk):
         if not clean_line: return
         if "[IPC] Queued outreach" in clean_line:
             self.metrics["outreach_sent"] += 1
-            self.card_outreach.update_value(self.metrics["outreach_sent"])
+            if hasattr(self, 'card_outreach'): self.card_outreach.update_value(self.metrics["outreach_sent"])
             self.log_to_feed("Outreach Sent", "OUTREACH")
         elif "Found contact info" in clean_line:
             self.metrics["leads_enriched"] += 1
-            self.card_enriched.update_value(self.metrics["leads_enriched"])
+            if hasattr(self, 'card_enriched'): self.card_enriched.update_value(self.metrics["leads_enriched"])
             self.log_to_feed("Lead Enriched", "SUCCESS")
         elif "Blocked:" in clean_line:
             self.metrics["rules_triggered"] += 1
-            self.card_safety.update_value(self.metrics["rules_triggered"])
+            if hasattr(self, 'card_safety'): self.card_safety.update_value(self.metrics["rules_triggered"])
             self.log_to_feed(f"Safety: {clean_line.split('Blocked: ')[-1]}", "ALERT")
         elif "[SYNC] Status: OK" in clean_line:
-            ts = datetime.now().strftime("%H:%M")
-            self.lbl_sync_status.configure(text=f"SYNC: OK ({ts})", text_color=COLOR_SUCCESS)
             self.log_to_feed("Cloud Sync Completed", "SYNC")
         elif "[SYNC] Status: Error" in clean_line:
-            ts = datetime.now().strftime("%H:%M")
-            self.lbl_sync_status.configure(text=f"SYNC: ERROR ({ts})", text_color=COLOR_DANGER)
             self.log_to_feed("Cloud Sync Failed", "ERROR")
-        elif "Successfully synced" in clean_line:
-            # Fallback for old log style if needed
-            self.log_to_feed("Cloud Sync Completed", "SYNC")
         elif "[Auto]" in clean_line:
             self.log_to_feed(clean_line, "AUTO")
 
     def log_to_feed(self, message, type="INFO"):
+        if not hasattr(self, 'console_box'): return
         ts = datetime.now().strftime("%H:%M:%S")
-        self.feed_box.configure(state="normal")
-        self.feed_box.insert("0.0", f"[{ts}] [{type}] {message}\n")
-        self.feed_box.configure(state="disabled")
+        self.console_box.configure(state="normal")
+        self.console_box.insert("0.0", f"[{ts}] [{type}] {message}\n")
+        self.console_box.configure(state="disabled")
 
     def on_closing(self):
         if self.is_running: self.stop_service()

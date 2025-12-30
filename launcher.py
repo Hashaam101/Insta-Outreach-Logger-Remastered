@@ -50,7 +50,17 @@ else:
 
 def log_crash(error_msg, exc_info=None):
     """Write crash information to a log file."""
+    # Always print to console first for immediate visibility
+    print(f"\n[CRASH] {error_msg}")
+    if exc_info:
+        traceback.print_exc()
+
     try:
+        if CRASH_LOG_PATH:
+            log_dir = os.path.dirname(CRASH_LOG_PATH)
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
+
         with open(CRASH_LOG_PATH, 'a', encoding='utf-8') as f:
             f.write(f"\n{'='*60}\n")
             f.write(f"CRASH LOG - {datetime.datetime.now().isoformat()}\n")
@@ -165,10 +175,10 @@ class Launcher:
         except Exception: pass
 
         # 3. Legacy/Dev Check
+        # Wallet is no longer required with TLS connection strings
         env_exists = os.path.exists(self.env_path)
-        wallet_exists = os.path.exists(self.wallet_path)
-
-        return op_config_exists and (has_secure or (env_exists and wallet_exists))
+        
+        return op_config_exists and (has_secure or env_exists)
 
     def run_setup_wizard(self):
         """Launch the setup wizard for first-time configuration."""
@@ -492,9 +502,21 @@ class Launcher:
                     print("=" * 50)
 
                     print("[Launcher] Starting GUI...")
-                    app = AppUI()
-                    app.protocol("WM_DELETE_WINDOW", app.on_closing)
-                    app.mainloop()
+                    try:
+                        print("DEBUG_TRACE: Allocating AppUI...")
+                        app = AppUI(launcher=self)
+                        print("DEBUG_TRACE: AppUI allocated. Setting protocol...")
+                        app.protocol("WM_DELETE_WINDOW", app.on_closing)
+                        print("DEBUG_TRACE: Entering mainloop...")
+                        app.mainloop()
+                        print("DEBUG_TRACE: Exited mainloop.")
+                    except Exception as e:
+                        import traceback
+                        err_msg = f"FATAL ERROR in AppUI: {e}\n{traceback.format_exc()}"
+                        print(err_msg)
+                        with open("fatal_error.txt", "w") as f:
+                            f.write(err_msg)
+                        input("Press Enter to exit (Fatal Error)...") # Force console to stay open
                     
                 except ImportError as e:
                     raise ImportError(f"Could not import AppUI: {e}")
@@ -715,44 +737,15 @@ class Launcher:
                 sys.exit(1)
             self.log("Setup complete!")
             print("[Launcher] Setup wizard completed successfully")
-        else:
-            # Credentials exist, show optional Reconfigure menu
-            print("[Launcher] Credentials verified")
-            
-            # --- Menu Loop (Only if creds exist) ---
-            print("\n[MAIN MENU]")
-            print("1. Reconfigure Setup (Launch Wizard)")
-            print("[ENTER] Start Application")
-            
-            # Short timeout or just wait for input
-            choice = input("\nSelect an option: ").strip()
-            
-            if choice == '1':
-                print("[Launcher] Launching setup wizard for reconfiguration...")
-                self.run_setup_wizard()
-            # If Enter or anything else, continue to start
-
-
+        
         # Step 1.5: Ensure Native Host is Registered (Self-Repair)
         print("[Launcher] Step 1.5: Verifying Native Host Registration...")
         self.ensure_native_host_registration()
 
-        # Step 2: Check for updates
-        print("[Launcher] Step 2: Checking for updates...")
-        update_available, new_version, download_url = self.check_for_updates()
-
-        if update_available and download_url:
-            self.log(f"Update found (v{new_version}). Installing automatically...")
-            update_path = self.download_update(download_url, new_version)
-            if update_path:
-                self.apply_update(update_path)
-                # If we get here, apply_update failed
-                self.log("Update failed. Continuing with current version.", "WARNING")
+        # Step 2: Show Welcome Window (GUI Dashboard)
+        # Replaces the old CLI loop and manual update check
         
-        print("[Launcher] Update check completed")
-
-        # Step 3: Launch main application
-        print("[Launcher] Step 3: Launching main application...")
+        # CHANGED: Direct launch to Main App (Unified UI)
         self.launch_main_app()
 
 

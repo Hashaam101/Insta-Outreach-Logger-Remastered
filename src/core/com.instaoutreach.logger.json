@@ -1,0 +1,9 @@
+{
+    "name": "com.instaoutreach.logger",
+    "description": "Native Host",
+    "path": "C:\\Users\\Hashaam\\Desktop\\My-Code\\Insta-Outreach-Logger-Remastered\\src\\core\\bridge.bat",
+    "type": "stdio",
+    "allowed_origins": [
+        "chrome-extension://kjjlomlmaaaehnnnkdhoocdhijbefffp/"
+    ]
+}
