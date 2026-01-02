@@ -108,6 +108,7 @@ local_data.db
 
 # Local Documents
 precommitdocs/
+com.instaoutreach.logger.json
 
 # Temporarily Ignored Files
 workflows/
