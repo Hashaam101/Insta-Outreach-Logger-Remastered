@@ -22,17 +22,19 @@ class SyncEngine:
     Handles Heartbeats for Operator and Actor status.
     """
 
-    def __init__(self, server_ref, operator_name: str, sync_interval: int = 60, on_update_callback=None):
+    def __init__(self, server_ref, operator_name: str, operator_email: str, sync_interval: int = 60, on_update_callback=None):
         """
         Initialize the Sync Engine.
         Args:
             server_ref: Reference to the IPC Server (to access session state).
             operator_name: The name of the human operator running this instance.
+            operator_email: The email of the human operator.
             sync_interval: Seconds between sync cycles.
             on_update_callback: Function to call when new data is pulled from cloud.
         """
         self.server_ref = server_ref
         self.operator_name = operator_name
+        self.operator_email = operator_email
         self.running = False
         self.interval = sync_interval
         self.failure_count = 0 # Track consecutive failures
@@ -41,6 +43,9 @@ class SyncEngine:
         self.db_manager = DatabaseManager()
         self.on_update_callback = on_update_callback
 
+        if not self.operator_email:
+            print("[SyncEngine] WARNING: Operator email not provided. Cannot guarantee operator existence in cloud.")
+
         print(f"[SyncEngine] Initialized for Operator: {self.operator_name}, Interval: {self.interval}s")
 
     def _send_heartbeat(self):
@@ -48,9 +53,12 @@ class SyncEngine:
         Updates the 'LAST_ACTIVITY' timestamp for the Operator and the current Active Actor.
         """
         try:
-            # 1. Operator Heartbeat (Always)
-            print(f"[SyncEngine] Sending Heartbeat for Operator: {self.operator_name}")
-            self.db_manager.update_operator_heartbeat(self.operator_name)
+            # 1. Operator Heartbeat (Always, with upsert logic)
+            print(f"[SyncEngine] Ensuring operator '{self.operator_name}' exists and sending heartbeat...")
+            if self.operator_name and self.operator_email:
+                self.db_manager.ensure_operator_exists(self.operator_name, self.operator_email)
+            else:
+                print("[SyncEngine] Operator name or email missing, skipping heartbeat.")
 
             # 2. Actor Heartbeat (If active session)
             session = self.server_ref.session_state

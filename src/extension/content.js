@@ -28,7 +28,14 @@ let pendingCallbacks = new Map();
 let messageIdCounter = 0;
 
 function connectPort() {
-    if (!chrome.runtime?.id) return; // Context invalidated
+    if (port) return; // Already connected
+
+    if (!chrome.runtime?.id) {
+        console.warn('[InstaLogger] chrome.runtime.id not available, retrying port connection...');
+        setTimeout(connectPort, 500); // Retry after 500ms
+        return;
+    }
+
     try {
         port = chrome.runtime.connect({ name: 'content-script' });
         port.onMessage.addListener((message) => {
@@ -46,11 +53,15 @@ function connectPort() {
             }
         });
         port.onDisconnect.addListener(() => {
+            console.warn('[InstaLogger] Content script port disconnected, attempting reconnect...');
             port = null;
             setTimeout(connectPort, 1000);
         });
+        console.log('[InstaLogger] Content script port connected.');
     } catch (e) {
         console.error('[InstaLogger] Failed to connect port:', e);
+        port = null; // Ensure port is null if connection failed
+        setTimeout(connectPort, 2000); // Retry connection after an error
     }
 }
 
@@ -63,9 +74,21 @@ function fetchCachedActors() {
 }
 
 function sendMessageToBackground(data, callback) {
-    if (!chrome.runtime?.id) return; // Context invalidated
-    if (!port) connectPort();
-    if (!port) return; // Still no port?
+    if (!chrome.runtime?.id) {
+        console.error('[InstaLogger] sendMessageToBackground: chrome.runtime.id not available. Context invalidated?');
+        if (callback) callback({ error: true, message: 'Extension context invalidated.' });
+        return;
+    }
+    if (!port) {
+        console.warn('[InstaLogger] sendMessageToBackground: Port not connected, attempting to connect...');
+        connectPort();
+        // If still no port after attempting connection, it means connection failed.
+        if (!port) {
+            console.error('[InstaLogger] sendMessageToBackground: Failed to establish port connection.');
+            if (callback) callback({ error: true, message: 'Failed to establish connection with background script.' });
+            return;
+        }
+    }
     try {
         if (callback) {
             const requestId = ++messageIdCounter;
@@ -74,8 +97,11 @@ function sendMessageToBackground(data, callback) {
         }
         port.postMessage(data);
     } catch (e) {
-        console.error('[InstaLogger] Error sending message:', e);
+        console.error('[InstaLogger] Error sending message via port:', e);
         if (callback) callback({ error: true, message: e.message });
+        // Attempt to reconnect if port failed
+        port = null;
+        setTimeout(connectPort, 500);
     }
 }
 
@@ -869,12 +895,26 @@ function findAndAttach() {
         }
         chatInput.addEventListener('keydown', handleKeyDown, { capture: true });
         activeChatInput = chatInput;
-        console.log('[InstaLogger] Attached to chat input');
+        console.log('[InstaLogger] DEBUG: Successfully attached keydown listener to chat input:', chatInput);
     }
 
     // Attach to send button
     // Strategy: Look for button with "Send" text or "Send" label, or fall back to button in footer
     const buttons = Array.from(document.querySelectorAll('div[role="button"][tabindex="0"]'));
+    
+    // --- DEBUG LOGGING ---
+    if (buttons.length > 0 && !document.querySelector('[data-insta-logger-attached="true"]')) {
+        console.log(`[InstaLogger] DEBUG: Found ${buttons.length} potential send buttons. Inspecting them:`, buttons);
+        buttons.forEach((b, index) => {
+            console.log(`[InstaLogger] DEBUG: Button ${index}:`, {
+                element: b,
+                text: b.textContent.trim().toLowerCase(),
+                ariaLabel: b.getAttribute('aria-label')
+            });
+        });
+    }
+    // --- END DEBUG LOGGING ---
+
     const sendButton = buttons.find(b => {
         const text = b.textContent.trim().toLowerCase();
         return text === 'send' || b.getAttribute('aria-label') === 'Send';
@@ -885,7 +925,7 @@ function findAndAttach() {
         sendButton.addEventListener('mousedown', handleSendButtonClick, { capture: true });
         sendButton.addEventListener('click', handleSendButtonClick, { capture: true }); // Backup
         sendButton.dataset.instaLoggerAttached = 'true';
-        console.log('[InstaLogger] Attached to send button');
+        console.log('[InstaLogger] DEBUG: Successfully attached click listener to send button:', sendButton);
     }
 }
 

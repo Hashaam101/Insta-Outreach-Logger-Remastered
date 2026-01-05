@@ -95,7 +95,7 @@ chrome.runtime.onConnect.addListener((port) => {
             pendingRequests.set(message.requestId, { tabId, requestId: message.requestId, context });
         }
 
-// Forward all other messages to the native host
+        // Forward all other messages to the native host
         if (nativePort) {
             console.log('Forwarding message to native host:', message.type);
             nativePort.postMessage(message);
@@ -103,17 +103,23 @@ chrome.runtime.onConnect.addListener((port) => {
             // Attempt to connect
             connectNative();
             
-            // If still not connected after attempt, return a friendly error
-            if (!nativePort && message.requestId && tabId) {
-                port.postMessage({
-                    requestId: message.requestId,
-                    error: true,
-                    message: 'APPLICATION_OFFLINE',
-                    friendlyMessage: 'Application not running. Please ensure the Insta Outreach Logger app is open on your computer.'
-                });
-            } else if (nativePort) {
-                nativePort.postMessage(message);
-            }
+            // After a brief moment for connection to establish or fail...
+            setTimeout(() => {
+                if (nativePort) {
+                    console.log('Forwarding message to native host (after reconnect):', message.type);
+                    nativePort.postMessage(message);
+                } else {
+                    console.warn('Native host connection failed. Sending OFFLINE to client.');
+                    if (message.requestId && tabId) {
+                        port.postMessage({
+                            requestId: message.requestId,
+                            error: true,
+                            message: 'APPLICATION_OFFLINE',
+                            friendlyMessage: 'Application not running. Please ensure the Insta Outreach Logger app is open on your computer.'
+                        });
+                    }
+                }
+            }, 200); // 200ms delay for connectNative to succeed or fail
         }
     });
 

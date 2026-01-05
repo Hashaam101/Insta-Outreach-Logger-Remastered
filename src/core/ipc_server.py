@@ -63,9 +63,17 @@ class IPCServer:
     It is the exclusive owner of the local SQLite DB connection.
     """
 
-    def __init__(self):
+    def __init__(self, operator_data: dict):
         """Initialize the IPC Server, LocalDatabase, SyncEngine, and Operator identity."""
-        self.operator_name = self._load_or_prompt_operator()
+        if not operator_data or not (operator_data.get('operator_name') or operator_data.get('OPR_NAME')):
+            raise ValueError("Operator data with a name is required.")
+
+        self.operator_data = operator_data
+        self.operator_name = operator_data.get('operator_name') or operator_data.get('OPR_NAME')
+        operator_email = operator_data.get('operator_email') or operator_data.get('OPR_EMAIL')
+
+        print(f"[Config] Operator Initialized: {self.operator_name}")
+
         self.db = LocalDatabase()
         self.checker = PreFlightChecker(self.db)
         
@@ -84,7 +92,8 @@ class IPCServer:
         # Pass server reference to SyncEngine so it can read session_state
         self.sync_engine = SyncEngine(
             server_ref=self,
-            operator_name=self.operator_name, 
+            operator_name=self.operator_name,
+            operator_email=operator_email,
             sync_interval=60,
             on_update_callback=self.broadcast_sync_event
         )
@@ -96,24 +105,7 @@ class IPCServer:
         self.active_clients = {} # {client_id: {'socket': sock, 'lock': threading.Lock()}}
         self.clients_lock = threading.Lock() # Protects the active_clients dict itself
 
-    def _load_or_prompt_operator(self):
-        """
-        Loads the operator name from config.
-        Identity must be established via the Setup Wizard.
-        """
-        if os.path.exists(OPERATOR_CONFIG_PATH):
-            try:
-                with open(OPERATOR_CONFIG_PATH, 'r') as f:
-                    config = json.load(f)
-                    name = config.get('operator_name')
-                    if name:
-                        print(f"[Config] Operator Loaded: {name}")
-                        return name
-            except (json.JSONDecodeError, IOError) as e:
-                print(f"[Config] Error reading operator_config.json: {e}")
 
-        # If file doesn't exist, is invalid, or name is missing, we cannot continue in CLI mode.
-        raise RuntimeError("Operator identity not established. Please run the Setup Wizard.")
 
     def _load_user_prefs(self):
         if os.path.exists(USER_PREFS_PATH):

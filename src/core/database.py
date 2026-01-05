@@ -159,11 +159,36 @@ class DatabaseManager:
                 columns = [col[0] for col in cursor.description]
                 return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-    def update_operator_heartbeat(self, operator_name):
-        sql = "UPDATE OPERATORS SET LAST_ACTIVITY = SYSTIMESTAMP, OPR_STATUS = 'online' WHERE OPR_NAME = :1"
+    def ensure_operator_exists(self, operator_name, operator_email):
+        """
+        Ensures an operator exists by name, creating it if it doesn't.
+        Also updates its heartbeat.
+        """
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, [operator_name])
+                # 1. Try to update the heartbeat first
+                sql_update = "UPDATE OPERATORS SET LAST_ACTIVITY = SYSTIMESTAMP, OPR_STATUS = 'online' WHERE OPR_NAME = :1"
+                cursor.execute(sql_update, [operator_name])
+
+                # 2. If no rows were updated, the operator doesn't exist. Create it.
+                if cursor.rowcount == 0:
+                    print(f"[OracleDB] Operator '{operator_name}' not found. Creating record...")
+                    try:
+                        # Use a simplified version of create_operator logic here
+                        opr_id = f"OPR-{int(time.time()):X}"
+                        sql_insert = """
+                            INSERT INTO OPERATORS (OPR_ID, OPR_EMAIL, OPR_NAME, OPR_STATUS, CREATED_AT, LAST_ACTIVITY)
+                            VALUES (:1, :2, :3, 'online', SYSTIMESTAMP, SYSTIMESTAMP)
+                        """
+                        cursor.execute(sql_insert, [opr_id, operator_email, operator_name])
+                        print(f"[OracleDB] Operator '{operator_name}' created with ID {opr_id}.")
+                    except oracledb.Error as e:
+                        # Handle potential race condition if another process created it in the meantime
+                        if 'ORA-00001' in str(e): # Unique constraint violated
+                             print(f"[OracleDB] Operator '{operator_name}' was created by another process. Continuing.")
+                        else:
+                            raise # Re-raise other errors
+                
                 connection.commit()
 
     def update_actor_heartbeat(self, actor_username, operator_name):
