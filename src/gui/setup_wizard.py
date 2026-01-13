@@ -78,6 +78,8 @@ try:
 except ImportError:
     DND_AVAILABLE = False
 
+from src.gui.spinner import LoadingSpinner
+
 
 class HelpTooltip:
     """A tooltip popup that appears when hovering a help icon."""
@@ -474,6 +476,12 @@ class SetupWizard(CTkDnD):
         self.operator_email_label = ctk.CTkLabel(self.profile_frame, text="Sign in to link your activity log.", font=ctk.CTkFont(size=12), text_color="#565f89")
         self.operator_email_label.pack(pady=(5, 0))
 
+        self.operator_email_label.pack(pady=(5, 0))
+
+        # Spinner (Hidden by default)
+        self.auth_spinner = LoadingSpinner(self.operator_section, size=40, color="#f59e0b")
+        # We don't pack it yet
+
         # Auth Button
         self.auth_button = ctk.CTkButton(
             self.operator_section, 
@@ -798,13 +806,21 @@ class SetupWizard(CTkDnD):
 
         # Start New Auth
         self.auth_button.configure(text="Connecting... (Click to Cancel)", fg_color="#f59e0b", hover_color="#d97706")
+        
+        # Show Spinner
+        self.profile_frame.pack_forget() # Hide profile card to make space/reduce clutter (optional, or just add spinner below)
+        # Actually let's keep profile card but maybe overlay or just put spinner below it?
+        # Re-packing profile frame to ensure order if we messed with it, but simpler to just pack spinner above button
+        self.profile_frame.pack(fill="x", pady=(0, 10), ipady=20)
+        self.auth_spinner.pack(pady=(0, 20))
+        self.auth_spinner.start()
         self.auth_request_id += 1
         current_req_id = self.auth_request_id
         
         # 1. Get Credentials
         cid, csecret = self._get_google_creds()
         if not cid or not csecret:
-             messagebox.showerror("Configuration Error", "Google OAuth credentials not found in Setup Pack (.env).")
+             messagebox.showerror("Configuration Error", "Google OAuth credentials not found in Setup Pack or local .env.")
              self._auth_failed("Missing Credentials")
              return
 
@@ -836,7 +852,12 @@ class SetupWizard(CTkDnD):
             
             if not env_vars:
                  # Local fallback
-                env_vars = dotenv_values(os.path.join(project_root, '.env'))
+                env_path = os.path.join(project_root, '.env')
+                if os.path.exists(env_path):
+                    env_vars = dotenv_values(env_path)
+                    print(f"[Setup] Loaded credentials from local .env: {env_path}")
+                else:
+                    print(f"[Setup] Local .env not found at: {env_path}")
             
             return env_vars.get('GOOGLE_CLIENT_ID'), env_vars.get('GOOGLE_CLIENT_SECRET')
 
@@ -894,6 +915,9 @@ class SetupWizard(CTkDnD):
                 self.after(0, lambda: self._auth_failed(str(e)))
 
     def _auth_failed(self, msg, is_cancel=False):
+        self.auth_spinner.stop()
+        self.auth_spinner.pack_forget()
+        
         self.auth_button.configure(state="normal", text="Sign in with Google", fg_color="white", hover_color="#e5e7eb")
         if not is_cancel:
             self.db_status_label.configure(text=msg, text_color="#ef4444")
@@ -902,6 +926,9 @@ class SetupWizard(CTkDnD):
             self.db_status_label.configure(text="Cancelled", text_color="#f59e0b")
 
     def _update_profile_ui(self, user_info, status_msg, img_data=None):
+        self.auth_spinner.stop()
+        self.auth_spinner.pack_forget()
+
         self.auth_user_info = user_info
         self.operator_name_label.configure(text=user_info['name'])
         self.operator_email_label.configure(text=user_info['email'])
