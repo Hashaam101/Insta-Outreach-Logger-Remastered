@@ -10,11 +10,18 @@ class LoadingSpinner(ctk.CTkFrame):
         self.angle = 0
         self.is_spinning = False
         
+        # Resolve color. Canvas doesn't support "transparent".
+        bg_color = self._apply_appearance_mode(self._fg_color)
+        if bg_color == "transparent":
+            # Fallback to the likely background color of the app
+            # SetupWizard uses #0F0E13, but let's try to be generic or default to that
+            bg_color = "#0F0E13" 
+
         self.canvas = tk.Canvas(
             self, 
             width=size, 
             height=size, 
-            bg=self._apply_appearance_mode(self._fg_color), 
+            bg=bg_color, 
             highlightthickness=0
         )
         self.canvas.pack()

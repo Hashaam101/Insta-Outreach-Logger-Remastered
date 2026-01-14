@@ -930,6 +930,10 @@ class AppUI(ctk.CTk):
             self.log_to_feed("Cloud Sync Completed", "SYNC")
         elif "[SYNC] Status: Error" in clean_line:
             self.log_to_feed("Cloud Sync Failed", "ERROR")
+        elif "[SyncEngine] Push Error:" in clean_line:
+            # Extract the error message and show prominently
+            error_msg = clean_line.split("Push Error:")[-1].strip()
+            self.log_to_feed(f"Push Failed: {error_msg[:60]}...", "ERROR")
         elif "[Auto]" in clean_line:
             self.log_to_feed(clean_line, "AUTO")
 
@@ -941,7 +945,16 @@ class AppUI(ctk.CTk):
         self.console_box.configure(state="disabled")
 
     def on_closing(self):
-        if self.is_running: self.stop_service()
+        if self.is_running:
+            # Run a final sync before closing
+            if self.server and self.server.sync_engine:
+                self.log_to_feed("Running final sync before closing...", "SYSTEM")
+                try:
+                    self.server.sync_engine.sync_cycle()
+                    self.log_to_feed("Final sync completed", "SYNC")
+                except Exception as e:
+                    print(f"[UI] Final sync failed: {e}")
+            self.stop_service()
         self.destroy()
         sys.exit(0)
 

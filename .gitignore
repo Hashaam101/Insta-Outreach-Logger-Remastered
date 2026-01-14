@@ -101,8 +101,8 @@ yarn-debug.log*
 yarn-error.log*
 
 # Database / Local cache
-local_data.db
 *.db
+*.db.bak
 *.sqlite
 *.sqlite3
 

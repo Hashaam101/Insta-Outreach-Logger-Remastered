@@ -94,7 +94,7 @@ class SyncEngine:
         try:
             unsynced = local_db.get_unsynced_events(limit=50) # Batch size 50
             if not unsynced:
-                return
+                return True  # Nothing to push is still a success
 
             print(f"[SyncEngine] Pushing {len(unsynced)} local events...")
             
@@ -126,6 +126,9 @@ class SyncEngine:
         except Exception as e:
             print(f"[SyncEngine] Push Error: {e}")
             traceback.print_exc()
+            return False  # Indicate failure
+        
+        return True  # Indicate success
 
     def sync_cycle(self):
         """
@@ -135,6 +138,7 @@ class SyncEngine:
         3. Push Events (Logs)
         """
         local_db = None
+        push_success = True
         try:
             local_db = LocalDatabase()
             
@@ -145,11 +149,11 @@ class SyncEngine:
             self._pull_governance_data(local_db)
 
             # 3. Push Events
-            self._push_local_events(local_db)
+            push_success = self._push_local_events(local_db)
 
-            # 4. Success Callback
+            # 4. Success Callback (only if push succeeded)
             if self.on_update_callback:
-                self.on_update_callback(True)
+                self.on_update_callback(push_success)
 
         except Exception as e:
             print(f"[SyncEngine] FATAL: Sync cycle failed: {e}")

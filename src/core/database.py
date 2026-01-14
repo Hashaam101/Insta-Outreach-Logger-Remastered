@@ -160,10 +160,42 @@ class DatabaseManager:
                 return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def update_operator_heartbeat(self, operator_name):
-        sql = "UPDATE OPERATORS SET LAST_ACTIVITY = SYSTIMESTAMP, OPR_STATUS = 'online' WHERE OPR_NAME = :1"
+        """
+        Updates operator heartbeat. If operator doesn't exist, creates them.
+        Uses MERGE (upsert) pattern for Oracle.
+        """
+        # First try to get the operator's email from local config for creation
+        import json as json_module
+        opr_email = 'unknown@local'
+        try:
+            opr_config_path = os.path.join(PROJECT_ROOT, 'operator_config.json')
+            with open(opr_config_path, 'r') as cfg_file:
+                cfg_data = json_module.load(cfg_file)
+                opr_email = cfg_data.get('operator_email', 'unknown@local')
+        except: pass
+        
         with self.get_connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, [operator_name])
+                # Check if operator exists
+                cursor.execute("SELECT OPR_ID FROM OPERATORS WHERE OPR_NAME = :1", [operator_name])
+                res = cursor.fetchone()
+                
+                if res:
+                    # Update existing
+                    cursor.execute(
+                        "UPDATE OPERATORS SET LAST_ACTIVITY = SYSTIMESTAMP, OPR_STATUS = 'online' WHERE OPR_NAME = :1",
+                        [operator_name]
+                    )
+                else:
+                    # Create new operator
+                    import time
+                    opr_id = f"OPR-{int(time.time()):X}"
+                    print(f"[OracleDB] Auto-creating operator '{operator_name}' with ID {opr_id} (via heartbeat)")
+                    cursor.execute("""
+                        INSERT INTO OPERATORS (OPR_ID, OPR_EMAIL, OPR_NAME, OPR_STATUS, CREATED_AT, LAST_ACTIVITY)
+                        VALUES (:1, :2, :3, 'online', SYSTIMESTAMP, SYSTIMESTAMP)
+                    """, [opr_id, opr_email, operator_name])
+                
                 connection.commit()
 
     def update_actor_heartbeat(self, actor_username, operator_name):
@@ -222,13 +254,69 @@ class DatabaseManager:
                     if not act_id.startswith("ACT-"):
                          cursor.execute("SELECT ACT_ID FROM ACTORS WHERE ACT_USERNAME = :1", [act_id])
                          res = cursor.fetchone()
-                         act_id = res[0] if res else 'UNKNOWN'
+                         if res:
+                             act_id = res[0]
+                         else:
+                             # Auto-create actor if not found
+                             # First we need to get/create the operator to link the actor
+                             opr_id_for_actor = event['opr_id']
+                             if not opr_id_for_actor.startswith("OPR-"):
+                                 cursor.execute("SELECT OPR_ID FROM OPERATORS WHERE OPR_NAME = :1", [opr_id_for_actor])
+                                 opr_res = cursor.fetchone()
+                                 if opr_res:
+                                     opr_id_for_actor = opr_res[0]
+                                 else:
+                                     # Create operator first (will be used below)
+                                     import json as json_module
+                                     opr_config_path = os.path.join(PROJECT_ROOT, 'operator_config.json')
+                                     opr_email = 'unknown@local'
+                                     try:
+                                         with open(opr_config_path, 'r') as cfg_file:
+                                             cfg_data = json_module.load(cfg_file)
+                                             opr_email = cfg_data.get('operator_email', 'unknown@local')
+                                     except: pass
+                                     
+                                     opr_id_for_actor = f"OPR-{int(time.time()):X}"
+                                     print(f"[OracleDB] Auto-creating operator '{event['opr_id']}' with ID {opr_id_for_actor}")
+                                     cursor.execute("""
+                                         INSERT INTO OPERATORS (OPR_ID, OPR_EMAIL, OPR_NAME, OPR_STATUS, CREATED_AT, LAST_ACTIVITY)
+                                         VALUES (:1, :2, :3, 'online', SYSTIMESTAMP, SYSTIMESTAMP)
+                                     """, [opr_id_for_actor, opr_email, event['opr_id']])
+                                     connection.commit()
+                             
+                             # Now create the actor
+                             act_id = f"ACT-{int(time.time()*1000):X}"
+                             print(f"[OracleDB] Auto-creating actor '@{event['act_id']}' with ID {act_id}")
+                             cursor.execute("""
+                                 INSERT INTO ACTORS (ACT_ID, ACT_USERNAME, OPR_ID, ACT_STATUS, CREATED_AT, LAST_ACTIVITY)
+                                 VALUES (:1, :2, :3, 'Active', SYSTIMESTAMP, SYSTIMESTAMP)
+                             """, [act_id, event['act_id'], opr_id_for_actor])
+                             connection.commit()
 
                     opr_id = event['opr_id']
                     if not opr_id.startswith("OPR-"):
                          cursor.execute("SELECT OPR_ID FROM OPERATORS WHERE OPR_NAME = :1", [opr_id])
                          res = cursor.fetchone()
-                         opr_id = res[0] if res else 'UNKNOWN'
+                         if res:
+                             opr_id = res[0]
+                         else:
+                             # Auto-create operator if not found (handles bypassed DB verification)
+                             import json as json_module
+                             opr_config_path = os.path.join(PROJECT_ROOT, 'operator_config.json')
+                             opr_email = 'unknown@local'
+                             try:
+                                 with open(opr_config_path, 'r') as cfg_file:
+                                     cfg_data = json_module.load(cfg_file)
+                                     opr_email = cfg_data.get('operator_email', 'unknown@local')
+                             except: pass
+                             
+                             opr_id = f"OPR-{int(time.time()):X}"
+                             print(f"[OracleDB] Auto-creating operator '{event['opr_id']}' with ID {opr_id}")
+                             cursor.execute("""
+                                 INSERT INTO OPERATORS (OPR_ID, OPR_EMAIL, OPR_NAME, OPR_STATUS, CREATED_AT, LAST_ACTIVITY)
+                                 VALUES (:1, :2, :3, 'online', SYSTIMESTAMP, SYSTIMESTAMP)
+                             """, [opr_id, opr_email, event['opr_id']])
+                             connection.commit()
 
                     # Format timestamp to match Oracle's expected format (6 fractional digits)
                     # Python's isoformat() can produce variable fractional seconds
