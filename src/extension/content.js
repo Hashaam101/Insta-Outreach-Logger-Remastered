@@ -21,6 +21,7 @@ let currentActorUsername = null;
 let cachedActors = [];
 let bannerTimeoutId = null;
 let lastSentMessage = null;
+let currentCheckId = 0; // Increments each time we start a new check
 
 // Port connection
 let port = null;
@@ -769,9 +770,12 @@ function getInstagramUsername(inputElement) {
 }
 
 async function runProfileCheck(username, silentRefresh = false) {
-    if (isCheckInProgress) return;
+    // Increment check ID to invalidate any pending checks
+    currentCheckId++;
+    const thisCheckId = currentCheckId;
+
+    // Don't block - let new checks run. Old callbacks will be ignored via checkId
     isCheckInProgress = true;
-    const checkStartedForUsername = username;
     lastCheckedUsername = username;
 
     // Clear any existing timeout
@@ -785,6 +789,7 @@ async function runProfileCheck(username, silentRefresh = false) {
 
         // Set timeout to prevent stuck searching state
         bannerTimeoutId = setTimeout(() => {
+            if (currentCheckId !== thisCheckId) return; // Check was superseded
             console.warn('[InstaLogger] Profile check timeout - showing offline');
             isCheckInProgress = false;
             showStatusBanner('offline', { target_username: username });
@@ -798,7 +803,11 @@ async function runProfileCheck(username, silentRefresh = false) {
             bannerTimeoutId = null;
         }
 
-        if (lastCheckedUsername !== checkStartedForUsername) { isCheckInProgress = false; return; }
+        // If a newer check was started, ignore this response
+        if (currentCheckId !== thisCheckId) {
+            console.log(`[InstaLogger] Ignoring stale response for check ${thisCheckId}, current is ${currentCheckId}`);
+            return;
+        }
 
         if (response?.message === 'APPLICATION_OFFLINE') {
             await showStatusBanner('offline', { target_username: username });
@@ -938,26 +947,66 @@ const handleUrlChange = () => {
     const url = window.location.href;
     if (url === lastCheckedUrl) return;
     lastCheckedUrl = url;
-    if (isCheckInProgress) isCheckInProgress = false;
+
+    // Reset ALL state when URL changes
+    isCheckInProgress = false;
+    currentCheckId++; // Invalidate any pending checks
     if (dmDiscoveryInterval) { clearInterval(dmDiscoveryInterval); dmDiscoveryInterval = null; }
+    if (bannerTimeoutId) { clearTimeout(bannerTimeoutId); bannerTimeoutId = null; }
+
     document.querySelectorAll('.insta-warning-banner').forEach(b => b.remove());
     stopBannerPulse();
+
     const profileMatch = url.match(/https:\/\/www\.instagram\.com\/([a-zA-Z0-9_.]+)/);
-    if (profileMatch && profileMatch[1] && !['explore', 'reels', 'inbox', 'direct', 'accounts', 'login', 'p'].includes(profileMatch[1])) {
+    if (profileMatch && profileMatch[1] && !['explore', 'reels', 'reel', 'inbox', 'direct', 'accounts', 'login', 'p', 'stories'].includes(profileMatch[1])) {
         lastCheckedUsername = profileMatch[1];
         runProfileCheck(profileMatch[1]);
         // Trigger scraping
         setTimeout(() => cacheProfile(profileMatch[1]), 1500);
     } else if (url.includes('/direct/t/')) {
-        showStatusBanner('searching', { syncStage: 'local' });
+        // Don't show banner yet - wait for username detection first
         let attempts = 0;
-        dmDiscoveryInterval = setInterval(() => {
-            attempts++;
-            if (window.location.href !== url) { clearInterval(dmDiscoveryInterval); return; }
-            const dmUser = getInstagramUsername(document.querySelector(CHAT_INPUT_SELECTOR) || document.querySelector('div[role="main"]'));
-            if (dmUser && !dmUser.startsWith('unknown')) { clearInterval(dmDiscoveryInterval); dmDiscoveryInterval = null; lastCheckedUsername = dmUser; runProfileCheck(dmUser); }
-            else if (attempts >= 20) { clearInterval(dmDiscoveryInterval); updateSyncStage(document.getElementById('insta-warning-banner'), 'detection-failed'); }
-        }, 500);
+        const MAX_ATTEMPTS = 30; // 15 seconds max
+
+        // Give the page a moment to load
+        setTimeout(() => {
+            // First immediate attempt
+            const quickUser = getInstagramUsername(document.querySelector(CHAT_INPUT_SELECTOR) || document.querySelector('div[role="main"]'));
+            if (quickUser && !quickUser.startsWith('unknown') && !quickUser.startsWith('not_in')) {
+                lastCheckedUsername = quickUser;
+                console.log('[InstaLogger] Quick username detection:', quickUser);
+                runProfileCheck(quickUser);
+                return;
+            }
+
+            // Show searching banner only if quick detection failed
+            showStatusBanner('searching', { syncStage: 'local' });
+
+            dmDiscoveryInterval = setInterval(() => {
+                attempts++;
+                // URL changed while we were searching - abort
+                if (window.location.href !== url) {
+                    clearInterval(dmDiscoveryInterval);
+                    dmDiscoveryInterval = null;
+                    return;
+                }
+
+                const dmUser = getInstagramUsername(document.querySelector(CHAT_INPUT_SELECTOR) || document.querySelector('div[role="main"]'));
+                console.log(`[InstaLogger] DM detection attempt ${attempts}: ${dmUser}`);
+
+                if (dmUser && !dmUser.startsWith('unknown') && !dmUser.startsWith('not_in')) {
+                    clearInterval(dmDiscoveryInterval);
+                    dmDiscoveryInterval = null;
+                    lastCheckedUsername = dmUser;
+                    runProfileCheck(dmUser);
+                }
+                else if (attempts >= MAX_ATTEMPTS) {
+                    clearInterval(dmDiscoveryInterval);
+                    dmDiscoveryInterval = null;
+                    updateSyncStage(document.getElementById('insta-warning-banner'), 'detection-failed');
+                }
+            }, 500);
+        }, 300);
     }
 };
 
