@@ -342,23 +342,43 @@ class AppUI(ctk.CTk):
             self.control_card.configure(border_color=color)
 
     def _check_session(self):
-        """Check if user is authenticated and show appropriate view"""
-        # Load operator config
+        """Check if user is authenticated and show appropriate view. Auth must come first."""
+        user = self.auth_manager.get_authenticated_user()
+
+        if not user:
+            # If no valid auth token, we must treat the user as logged out.
+            # Clear any potentially stale local config and show the login screen.
+            self.operator_data = None
+            self._show_login_screen()
+            return
+
+        # --- User is authenticated, now we can trust local data ---
+        self.user_info = user
+        
+        # Load operator config from file
         config_path = os.path.join(project_root, 'operator_config.json')
         if os.path.exists(config_path):
             try:
                 with open(config_path, 'r') as f:
                     self.operator_data = json.load(f)
-            except: pass
+            except Exception:
+                self.operator_data = None # Treat corrupt file as non-existent
         
-        # Check auth using correct method
-        user = self.auth_manager.get_authenticated_user()
-        if user:
-            self.user_info = user
-            # Go directly to dashboard
-            self._show_dashboard()
+        # Enrich operator_data with email from auth. This is critical.
+        if self.operator_data:
+            self.operator_data['OPR_EMAIL'] = user.get('email')
+            self.operator_data['operator_email'] = user.get('email')
         else:
-            self._show_welcome_launcher()
+            # If no local config exists, create a fresh operator data dict
+            self.operator_data = {
+                'operator_name': user.get('name', 'Unknown Operator'),
+                'OPR_NAME': user.get('name', 'Unknown Operator'),
+                'operator_email': user.get('email'),
+                'OPR_EMAIL': user.get('email')
+            }
+            
+        # Go directly to the main dashboard
+        self._show_dashboard()
 
     def _handle_sign_out(self):
         """Handle sign out request."""
@@ -544,7 +564,7 @@ class AppUI(ctk.CTk):
             return
 
         self._clear_content()
-        lbl = ctk.CTkLabel(self.container, text="Verifying Identity...", font=ctk.CTkFont(size=20))
+        lbl = ctk.CTkLabel(self.content_area, text="Verifying Identity...", font=ctk.CTkFont(size=20))
         lbl.grid(row=0, column=0)
         
         def _bg_check():
@@ -867,7 +887,11 @@ class AppUI(ctk.CTk):
         
         self.start_time = datetime.now()
         try:
-            self.server = IPCServer()
+            if not self.operator_data:
+                messagebox.showerror("Startup Error", "Operator identity not loaded. Please re-run setup.")
+                self.stop_service()
+                return
+            self.server = IPCServer(operator_data=self.operator_data)
             self.is_running = True
             self.server_thread = threading.Thread(target=self._run_server, daemon=True)
             self.server_thread.start()

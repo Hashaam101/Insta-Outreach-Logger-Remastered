@@ -14,5 +14,5 @@ if exist "%SCRIPT_DIR%..\..\..\InstaLogger.exe" (
     "%SCRIPT_DIR%..\..\..\InstaLogger.exe" --bridge
 ) else (
     :: Fallback for Dev Mode
-    python "%SCRIPT_DIR%bridge.py"
+    "%SCRIPT_DIR%..\..\.venv\Scripts\python.exe" "%SCRIPT_DIR%bridge.py"
 )
